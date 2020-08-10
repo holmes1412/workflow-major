@@ -28,11 +28,11 @@ int main(void)
             task->get_resp()->get_result(val);
             if (!val.is_error())
                 printf("SET SUCCESS!\n);
-		}
+        }
         wait_group.done();
     });
-    task->get_req()->set_request("SET", { "Hello", "World") });
-	task->start();
+    task->get_req()->set_request("SET", { "Hello", "World" });
+    task->start();
     wait_group.wait();
     return 0
 }
