@@ -28,7 +28,7 @@ int main(void)
             protocol::RedisValue val;
             task->get_resp()->get_result(val);
             if (!val.is_error())
-                printf("SET SUCCESS!\n);
+                printf("SET SUCCESS!\n");
         }
         wait_group.done();
     });
