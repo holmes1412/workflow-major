@@ -19,6 +19,8 @@ int main()
 }
 ~~~
 * 作为万能异步客户端。目前支持http，redis，mysql和kafka协议。
-* 实现自定义协议client/server，构建自己的rpc系统。
+* 实现自定义协议client/server，构建自己的RPC系统。
   * 搜狗RPC就是以它为基础，作为独立项目开源。该项目支持srpc，brpc和thrift等协议（[benchmark](https://github.com/holmes1412/sogou-rpc-benchmark)）。
 * 构建任意复杂的任务流，支持常用的串并联，也支持更加复杂的DAG。
+* 作为并行编程工具使用。因为除了网络任务，我们也包含计算任务的调度。所有类型的任务都可以放入同一个任务流中。
+
