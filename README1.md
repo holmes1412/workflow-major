@@ -1,6 +1,6 @@
 ### Sogou C++ Workflow  
 搜狗公司C++服务器引擎，支撑搜狗几乎所有后端C++在线服务，包括所有搜索服务，云输入法，在线广告等，每日处理超百亿请求。  
-你可以使用它：
+你可以用来：
 * 快速搭建http服务器：
 ~~~cpp
 #include <stdio.h>
@@ -17,31 +17,5 @@ int main()
     return 0;
 }
 ~~~
-* 作为万能异步客户端。目前支持http，redis，mysql和kafka协议，例如访问本地redis服务：
-<details>
-	<summary>aaa</summary>
-	<pre>
-~~~cpp
-#include <stdio.h>
-#include "workflow/WFTaskFactory.h"
-#include "workflow/WFFacilities.h"
-WFFacilities::WaitGroup wait_group(1);
-int main(void)
-{
-    WFRedisTask *task = WFTaskFactory::create_redis_task("redis://127.0.0.1/", 0, [](WFRedisTask *task) {
-        if (task->get_state() == WFT_STATE_SUCCESS) {
-            protocol::RedisValue val;
-            task->get_resp()->get_result(val);
-            if (!val.is_error())
-                printf("SET SUCCESS!\n");
-        }
-        wait_group.done();
-    });
-    task->get_req()->set_request("SET", { "Hello", "World" });
-    task->start();
-    wait_group.wait();
-    return 0;
-}
-~~~
-	</pre>
-</details>
+* 作为万能异步客户端。目前支持http，redis，mysql和kafka协议。
+* 
