@@ -20,7 +20,8 @@ int main()
 * 作为万能异步客户端。目前支持http，redis，mysql和kafka协议，例如访问本地redis服务：
 <details>
 	<summary>aaa</summary>
-	<pre><code>
+	<pre>
+~~~cpp
 #include <stdio.h>
 #include "workflow/WFTaskFactory.h"
 #include "workflow/WFFacilities.h"
@@ -41,5 +42,6 @@ int main(void)
     wait_group.wait();
     return 0;
 }
-	</code></pre>
+~~~
+	</pre>
 </details>
