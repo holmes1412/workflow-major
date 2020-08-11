@@ -24,7 +24,7 @@ int main()
 * 作为万能异步客户端。目前支持http，redis，mysql和kafka协议。
 * 实现自定义协议client/server，构建自己的RPC系统。
   * 搜狗RPC就是以它为基础，作为独立项目开源。该项目支持srpc，brpc和thrift等协议（[benchmark](https://github.com/holmes1412/sogou-rpc-benchmark)）。
-* 构建异步任务流，支持常用的串并联，也支持更加复杂的DAG。
+* 构建异步任务流，支持常用的串并联，也支持更加复杂的DAG结构。
 * 作为并行编程工具使用。因为除了网络任务，我们也包含计算任务的调度。所有类型的任务都可以放入同一个任务流中。
 * 在Linux系统下作为文件异步IO工具使用，性能超过任何标准调用。磁盘IO也是一种任务。
 * 实现任何计算与通讯关系非常复杂的高性能高并发的后端服务。
@@ -36,7 +36,7 @@ int main()
 * 项目依赖于OpenSSL，推荐OpenSSL 1.1及以上版本。
 * 项目使用了C++11的功能，需要用支持C++11的编译器编译。但不依赖boost或asio。
 
-# 试一下
+# 试一下！
   * Client基础
     * [创建第一个任务：wget](docs/tutorial-01-wget.md)
     * [实现一次redis写入与读出：redis_cli](docs/tutorial-02-redis_cli.md)
@@ -70,4 +70,12 @@ int main()
     * [异步MySQL客户端：mysql_cli](docs/tutorial-12-mysql_cli.md)
 
 
-#### 系统设计原理
+#### 系统设计特点
+我们任为，一个典型的后端程序由一些三个部分组成，并且完全独立开发。
+* 协议
+  * 大多数情况下，用户使用的是内置的通用网络协议，例如http，redis或各种rpc。
+  * 用户可以方便的自定义网络协议，只需提供序列化和反序列化函数，就可以定义出自己的client/server。
+* 算法
+  * 在我们的设计里，算法是与协议对称的概念。如果说协议的调用是rpc，算法的调用就是一次apc（Async Procedure Call）。
+* 任务流
+
