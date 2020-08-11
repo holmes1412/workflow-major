@@ -37,6 +37,37 @@ int main()
 * 项目使用了C++11的功能，需要用支持C++11的编译器编译。但不依赖boost或asio。
 
 # 试一下
-基础用法教程[点击这里](./docs/tutorial.md)
+  * Client基础
+    * [创建第一个任务：wget](docs/tutorial-01-wget.md)
+    * [实现一次redis写入与读出：redis_cli](docs/tutorial-02-redis_cli.md)
+    * [任务序列的更多功能：wget_to_redis](docs/tutorial-03-wget_to_redis.md)
+  * Server基础
+    * [第一个server：http_echo_server](docs/tutorial-04-http_echo_server.md)
+    * [异步server的示例：http_proxy](docs/tutorial-05-http_proxy.md)
+  * 并行任务与工作流　
+    * [一个简单的并行抓取：parallel_wget](docs/tutorial-06-parallel_wget.md)
+  * 几个重要的话题
+    * [关于错误处理](docs/about-error.md)
+    * [关于超时](docs/about-timeout.md)
+    * [关于DNS](docs/about-dns.md)
+    * [关于程序退出](docs/about-exit.md)
+  * 计算任务
+    * [使用内置算法工厂：sort_task](docs/tutorial-07-sort_task.md)
+    * [自定义计算任务：matrix_multiply](docs/tutorial-08-matrix_multiply.md)
+  * 文件异步IO任务
+    * [异步IO的http server：http_file_server](docs/tutorial-09-http_file_server.md)
+  * 用户定义协议基础
+    * [简单的用户自定义协议client/server](docs/tutorial-10-user_defined_protocol.md)
+  * 定时与计数任务
+    * [关于定时器](docs/about-timer.md)
+    * [关于计数器](docs/about-counter.md)
+  * 服务治理
+    * [关于服务治理](docs/about-service-management.md)
+    * [Upstream更多文档](docs/about-upstream.md)
+  * 连接上下文的使用
+    * [关于连接上下文](docs/about-connection-context.md)
+  * 内置协议用法
+    * [异步MySQL客户端：mysql_cli](docs/tutorial-12-mysql_cli.md)
+
 
 #### 系统设计原理
