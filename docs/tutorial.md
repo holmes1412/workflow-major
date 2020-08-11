@@ -1,4 +1,5 @@
-#### 以下我们通过一些简单的例子，展现Sogou C++ Workflow框架的基本用法。
+#### 使用教程
+以下我们通过一些简单的例子，展现Sogou C++ Workflow框架的基本用法。
 
   * Client基础
     * [创建第一个任务：wget](./tutorial-01-wget.md)
