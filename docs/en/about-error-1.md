@@ -49,16 +49,16 @@ enum
 
 The states deserving our attention:
 
-* SUCCESS: The task is successful. The client receives the complete reply, or the server writes the reply completely into the sending buffer (but not guarantees that the other party will receive it).
-* SYS_ERROR: System error. In this case, what task->get_error() gets is the system error code errno.
-** When get_error() gets ETIMEDOUT, you can call task->get_timeout_reason() to further receive the timeout reason.
-* DNS_ERROR: DNS resolution error. What get_error() gets is the return code of getaddrinfo() call. For instructions of DNS, see the document [about-dns.md](./about-dns.md).
-** The server task will never has DNS_ERROR.
-* SSL_ERROR: SSL error. What get_error() gets is the return value of SSL_get_error().
-** For now SSL error information is not complete, and the value of ERR_get_error() cannot be obtained. Therefore, basically there are three possible get_error() returns values:
-*** SSL_ERROR_ZERO_RETURN, SSL_ERROR_X509_LOOKUP, SSL_ERROR_SSL。
-** We will consider adding more detailed SSL error information in the updated version.
-* TASK_ERROR: Task error. Common task errors include invalid URL, login failure. For return value of get_error() see [WFTaskError.h](../src/factory/WFTaskError.h).
+  * SUCCESS: The task is successful. The client receives the complete reply, or the server writes the reply completely into the sending buffer (but not guarantees that the other party will receive it).
+  * SYS_ERROR: System error. In this case, what task->get_error() gets is the system error code errno.
+    * When get_error() gets ETIMEDOUT, you can call task->get_timeout_reason() to further receive the timeout reason.
+  * DNS_ERROR: DNS resolution error. What get_error() gets is the return code of getaddrinfo() call. For instructions of DNS, see the document [about-dns.md](./about-dns.md).
+    * The server task will never has DNS_ERROR.
+  * SSL_ERROR: SSL error. What get_error() gets is the return value of SSL_get_error().
+    * For now SSL error information is not complete, and the value of ERR_get_error() cannot be obtained. Therefore, basically there are three possible get_error() returns values:
+      * SSL_ERROR_ZERO_RETURN, SSL_ERROR_X509_LOOKUP, SSL_ERROR_SSL。
+    * We will consider adding more detailed SSL error information in the updated version.
+  * TASK_ERROR: Task error. Common task errors include invalid URL, login failure. For return value of get_error() see [WFTaskError.h](../src/factory/WFTaskError.h).
 
 States that users generally don't have to pay attention:
 
