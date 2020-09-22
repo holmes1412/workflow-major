@@ -4,7 +4,7 @@ Global configuration is used to configure global default parameters to meet actu
 
 # Change default configuration
 
-WFGlobal.h contains the structure and default values of global configuration:
+[WFGlobal.h](../src/manager/WFGlobal.h) contains the structure and default values of global configuration:
 
 ```cpp
 struct WFGlobalSettings
@@ -18,7 +18,6 @@ struct WFGlobalSettings
     int compute_threads;            ///< auto-set by system CPU number if value<=0
 };
 
-
 static constexpr struct WFGlobalSettings GLOBAL_SETTINGS_DEFAULT =
 {
     .endpoint_params    =   ENDPOINT_PARAMS_DEFAULT,
@@ -31,7 +30,7 @@ static constexpr struct WFGlobalSettings GLOBAL_SETTINGS_DEFAULT =
 };
 ```
 
-Among all, the structure and default values of EndpointParams can be find at EndpointParams.h:
+Among all, the structure and default values of EndpointParams can be find at [EndpointParams.h](../src/manager/EndpointParams.h):
 
 ```cpp
 struct EndpointParams
