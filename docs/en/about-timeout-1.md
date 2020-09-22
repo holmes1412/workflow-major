@@ -14,7 +14,7 @@ In addition, as we noted in the project introduction, you can ignore all the con
 
 ### Basic communication timeout configuration
 
-In the file EndpointParams.h, we can see:
+In the file [EndpointParams.h](../src/manager/EndpointParams.h), we can see:
 ```cpp
 struct EndpointParams
 {
@@ -43,7 +43,7 @@ This structure is the most basic configuration of communication connection, and 
 
 # Global timeout configuration
 
-In the file WFGlobal.h, we can see one of our global configuration information:
+In the file [WFGlobal.h](../src/manager/WFGlobal.h), we can see one of our global configuration information:
 
 ```cpp
 struct WFGlobalSettings
@@ -88,11 +88,11 @@ In the above example, the connection timeout is changed to 2 seconds, and the se
 
 The global timeout configuration can be overwritten by a separate address configuration through upstream function. For example, you can specify the connection timeout for a certain domain name.
 
-Each AddressParams of Upstream also has an EndpointParamsendpoint_params, which is used in the same way as Global. For details of the structure at upstream document.
+Each AddressParams of Upstream also has an EndpointParamsendpoint_params, which is used in the same way as Global. For details of the structure at [upstream document](tutorial-10-upstream.md#Address属性).
 
 # Server timeout configuration
 
-In the http_proxy example, we introduced server start configuration. The configuration related to timeout includes:
+In the [http_proxy](./tutorial-05-http_proxy.md) example, we introduced server start configuration. The configuration related to timeout includes:
 
 - peer_response_timeout: The definition is the same as that of global peer_response_timeout, which means the response timeout of remote client. The default value is 10 seconds.
 - receive_timeout: The timeout for receiving a complete request is -1 by default.
