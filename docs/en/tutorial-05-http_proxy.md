@@ -6,7 +6,7 @@
 
 # About http\_proxy
 
-It is a HTTP proxy server. You can use it in a browser after proper configuration. It supports all HTTP methods.   
+It is an HTTP proxy server. You can use it in a browser after proper configuration. It supports all HTTP methods.   
 As HTTPS proxy follows different principles, this example does not support HTTPS proxy. You can only browse HTTP websites.   
 In the implementation, this proxy must crawl the entire HTTP page and then forward it. Therefore, there will be noticeable latency when you upload/download a large file.
 
