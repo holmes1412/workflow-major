@@ -6,7 +6,7 @@
 
 # About http\_proxy
 
-It is a HTTP proxy server. You can use it in a browser after proper configuration. It supports all HTTP methods.   
+It is an HTTP proxy server. You can use it in a browser after proper configuration. It supports all HTTP methods.   
 As HTTPS proxy follows different principles, this example does not support HTTPS proxy. You can only browse HTTP websites.   
 In the implementation, this proxy must crawl the entire HTTP page and then forward it. Therefore, there will be noticeable latency when you upload/download a large file.
 
@@ -50,13 +50,13 @@ static constexpr struct WFServerParams HTTP_SERVER_PARAMS_DEFAULT =
 };
 ~~~
 
-**max\_connections**: the maximum number of connections is 2000. When it is exceeded, the least recently used keep-alive connection will be closed. If there is no keep-alive connection, the server will refuse new connections.
+**max\_connections**: the maximum number of connections is 2000. When it is exceeded, the least recently used keep-alive connection will be closed. If there is no keep-alive connection, the server will refuse new connections.  
 **peer\_response\_timeout**: set the maximum duration for reading or sending out a block of data. The default setting is 10 seconds.   
 **receive\_timeout**: set the maximum duration for receiving a complete request; -1 means unlimited time.   
 **keep\_alive\_timeout**: set the maximum duration for maintaining a connection. The default setting is 1 minute.   
 **request\_size\_limit**: set the maximum size of a request packet. The default setting is unlimited packet size.   
 **ssl\_accept\_timeout**: set the maximum duration for an SSL handshake. The default setting is 10 seconds.   
-There is no **send\_timeout** in the parameters. **send\_timeout** sets the timeout for a complete response. This parameter should be determined according to the size of the response packet.
+There is no **send\_timeout** in the parameters. **send\_timeout** sets the timeout for sending a complete response. This parameter should be determined according to the size of the response packet.
 
 # Business logic of a proxy server
 
@@ -115,7 +115,7 @@ Both the retry times and the redirection times of this HTTP task is 0, because t
 
 In fact, the above four lines generates a HTTP request to the web server. req is the received HTTP request, and it will be moved directly to the new request via **std::move()**.   
 The first line removes the `http://host:port` in the request\_uri and keeps the part after the path.   
-The second line and the third line specify the parsed HTTP body as the HTTP body for output. The reason for this operation is that in the HttpMessage implementation, the body obtained by parsing and the body in the request are two domains, so we need to simply set it here, without copying the memory.   
+The second line and the third line specify the parsed HTTP body as the HTTP body for output. The reason for this operation is that in the HttpMessage implementation, the http body obtained by parsing and the http body to send out are two fields, so we need to simply set it here, without copying the memory.   
 The fourth line transfers the request content to the request sent to the web server at one time. After the HTTP request is constructed, the request is placed at the end of the current series, and the process function ends.
 
 # Principles behind an asynchronous server
@@ -198,7 +198,7 @@ Finally, the context is destroyed in the callback of the series.
 
 # Timing of a server reply
 
-Please note that the replies to a message is sent automatically after all other tasks in the series are finished, so there is no **task->reply()** interface.   
+Please note that the reply message is sent automatically after all other tasks in the series are finished, so there is no **task->reply()** interface.   
 However, there is a **task->noreply()**. If this interface is called for the server task, the connection will be closed directly at the original reply time. But the callback will still be called (its state is NOREPLY).   
 In the callback of a server task, you can also call **series\_of()** to get the series of that server task. Then, you can still add new tasks to this series, although the reply has finished.   
 If you needs to continue to add tasks to the series, please see the instructions in [About exit](./about-exit.md), because doing so may cause unfinished tasks after the server is shut down.

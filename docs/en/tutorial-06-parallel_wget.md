@@ -74,7 +74,7 @@ int main(int argc, char *argv[])
 }
 ~~~
 
-You can see in the code that we first create an HTTP task in the code, but the HTTP task cannot be directly added to the parallel task, so we need to use it to create a series first.   
+You can see that we first create an HTTP task in the code, but the HTTP task cannot be directly added to the parallel task, so we need to use it to create a series first.   
 Each series has its own context, which is used to save the URL and the crawled results. You can learn related methods in our previous examples.
 
 # Saving and using the crawled results
@@ -126,11 +126,11 @@ void callback(const ParallelWork *pwork)
 Here, you can see the two new interfaces of ParallelWork, **size()** and **series\_at(i)**, which are used to obtain the number of the series in parallel and the ith parallel series respectively.   
 You can use **series->get\_context()** to get the context of the series and print out the results.The printing order must be the same as with the order you add the series into the work.   
 In this example, there is no other work after the parallel tasks finish.   
-As we said above, ParallelWork is a type of tasks, so you can use **series\_of()** to get its series and add a new task.   
+As we said above, ParallelWork is a kind of tasks, so you can use **series\_of()** to get its series and add a new task.   
 However, if the crawled results are used in the new task, you need to use **std::move()** to move the data to the context of the series of that parallel task.
 
 # Starting a parallel task
 
-As a parallel task is a type of tasks, so there is nothing special in starting a parallel task. You can call **start()** directly, or you can use it to build or start a series.   
+As a parallel task is a kind of tasks, so there is nothing special in starting a parallel task. You can call **start()** directly, or you can use it to build or start a series.   
 In this example, we start a series, wake up the main process in the callback of this series, and exit the program normally.   
 We can also wake up the main process in the callback of parallel tasks, and there is little difference in the program behaviors. However, it is more formal to wake up the main process in the callback of the series.

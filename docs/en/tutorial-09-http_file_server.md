@@ -47,7 +47,7 @@ int main(int argc, char *argv[])
 # Handling requests
 
 Similar to http\_proxy, no threads are occupied in file reading. Instead, an asynchronous task is generated to read files, and a reply to the request is generated after the reading is completed.   
-Please note again that the complete reply data should be read into the memory before the reply to the message is sent. Therefore, it is not suitable for transferring too large files.
+Please note again that the complete reply data should be read into the memory before the reply message is sent. Therefore, it is not suitable for transferring very large files.
 
 ~~~cpp
 void process(WFHttpTask *server_task, const char *root)
@@ -147,7 +147,7 @@ server\_task->set\_callback(\[](WFHttpTask \*t){ free(t->user\_data); });
 
 Linux operating system supports a set of asynchronous IO system calls with high efficiency and very little CPU occupation. If you use our framework in a Linux system, this set of interfaces are used by default.   
 We have implemented a set of posix aio interfaces to support other UNIX systems, and used the sigevent notification method of threads, but it is no longer in use because of its low efficiency.   
-Currently, for non-Linux systems, asynchronous IO is always realized by multithreading. When an IO task arrives, a thread is created in real time to execute IO tasks, and then a callback is used to return to the handler thread pool.   
+Currently, for non-Linux systems, asynchronous IO is always simulated by multi-threading. When an IO task arrives, a thread is created in real time to execute IO tasks, and then a callback is used to return to the handler thread pool.   
 Multi-threaded IO is also the only choice in macOS, because macOS does not have good sigevent support and posix aio will not work in macOS.   
-Multithreaded IO does not support preadv and pwritev tasks. When these two tasks are created and run, you will get an ENOSYS error in the callback.   
+Multi-threaded IO does not support preadv and pwritev tasks. When these two tasks are created and run, you will get an ENOSYS error in the callback.   
 Some UNIX systems do not support fdatasync. In this case, an fdsync task is equivalent to an fsync task.

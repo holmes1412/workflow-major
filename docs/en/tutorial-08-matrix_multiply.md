@@ -24,7 +24,7 @@ class __WFThreadTask
 };
 ~~~
 
-It can be seen that routine is a simple calculation process from INPUT to OUTPUT. The INPUT pointer is not necessarily be const, but you can also pass the function of const INPUT \*.   
+It can be seen that routine is a simple computing process from INPUT to OUTPUT. The INPUT pointer is not necessarily be const, but you can also pass the function of const INPUT \*.   
 For example, to implement an adding task, you can:
 
 ~~~cpp
@@ -80,8 +80,8 @@ As the input matrices may be illegal in matrix multiplication, so there is an er
 
 # Generating computing tasks
 
-After you define the types of input and output and the algorithm process, you can use  WFThreadTaskFactory  to generate a calculation task.   
-In [WFTaskFactory.h](../src/factory/WFTaskFactory.h), the calculation factory is defined as follows:
+After you define the types of input and output and the algorithm process, you can use  WFThreadTaskFactory  to generate a computing task.   
+In [WFTaskFactory.h](../src/factory/WFTaskFactory.h), the computing task factory is defined as follows:
 
 ~~~cpp
 template <class INPUT, class OUTPUT>
@@ -98,8 +98,8 @@ public:
 };
 ~~~
 
-Slightly different from the previous network factory class or the algorithm factory class, this class requires two template parameters: INPUT and OUTPUT.   
-queue\_name is explained in the previous example. routine is the calculation process, and callback means the callback.   
+Slightly different from the previous network factory class or the algorithm factory class, this factory requires two template parameters: INPUT and OUTPUT.   
+queue\_name is explained in the previous example. routine is the computation process, and callback means the callback.   
 In our example, we see this call:
 
 ~~~cpp
@@ -166,4 +166,4 @@ In this example, we use WFThreadTaskFactory to build a thread task. This is the 
 Similarly, you can simply define a server and a client with a user-defined protocol.   
 However, in the previous example, we can use the algorithm factory to generate a parallel sorting task, which is obviously not possible with a routine.   
 For a network task, such as a Kafka task, interactions with several machines may be required to get results, but it is completely transparent to users.   
-Therefore, our tasks are composite. If you use our framework skillfully, you can design many composite  components.
+Therefore, our tasks are composite. If you use our framework skillfully, you can design many composite components.
