@@ -12,8 +12,8 @@ The above command will sort 100 million integers in ascending order and then in 
 
 # About computing tasks
 
-Computing tasks (or thread tasks) is a very important function in the framework. When you use the task flow, it is not recommended to directly perform very complicated calculations in the callback.   
-All the calculations that consume a lot of CPU time can be encapsulated into calculation tasks and handed over to the system for scheduling. There is no difference in the usage between computing tasks and communication tasks.   
+Computing tasks (or thread tasks) is a very important function in the framework. When you use the task flow, it is not recommended to directly perform very complicated computation in the callback.   
+All the computations that consume a lot of CPU time can be encapsulated into computing tasks and handed over to the system for scheduling. There is no difference in the usage between computing tasks and networking tasks.   
 The algorithm factory of the system provides some common computing tasks, such as sorting, merging and so on. You can also easily define your own computing tasks.
 
 # Creating sorting tasks in ascending order 
