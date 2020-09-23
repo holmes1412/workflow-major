@@ -56,7 +56,7 @@ static constexpr struct WFServerParams HTTP_SERVER_PARAMS_DEFAULT =
 **keep\_alive\_timeout**: set the maximum duration for maintaining a connection. The default setting is 1 minute.   
 **request\_size\_limit**: set the maximum size of a request packet. The default setting is unlimited packet size.   
 **ssl\_accept\_timeout**: set the maximum duration for an SSL handshake. The default setting is 10 seconds.   
-There is no **send\_timeout** in the parameters. **send\_timeout** sets the timeout for a complete response. This parameter should be determined according to the size of the response packet.
+There is no **send\_timeout** in the parameters. **send\_timeout** sets the timeout for sending a complete response. This parameter should be determined according to the size of the response packet.
 
 # Business logic of a proxy server
 
