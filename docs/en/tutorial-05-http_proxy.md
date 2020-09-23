@@ -50,7 +50,7 @@ static constexpr struct WFServerParams HTTP_SERVER_PARAMS_DEFAULT =
 };
 ~~~
 
-**max\_connections**: the maximum number of connections is 2000. When it is exceeded, the least recently used keep-alive connection will be closed. If there is no keep-alive connection, the server will refuse new connections.
+**max\_connections**: the maximum number of connections is 2000. When it is exceeded, the least recently used keep-alive connection will be closed. If there is no keep-alive connection, the server will refuse new connections.  
 **peer\_response\_timeout**: set the maximum duration for reading or sending out a block of data. The default setting is 10 seconds.   
 **receive\_timeout**: set the maximum duration for receiving a complete request; -1 means unlimited time.   
 **keep\_alive\_timeout**: set the maximum duration for maintaining a connection. The default setting is 1 minute.   
