@@ -74,7 +74,7 @@ int main(int argc, char *argv[])
 }
 ~~~
 
-You can see in the code that we first create an HTTP task in the code, but the HTTP task cannot be directly added to the parallel task, so we need to use it to create a series first.   
+You can see that we first create an HTTP task in the code, but the HTTP task cannot be directly added to the parallel task, so we need to use it to create a series first.   
 Each series has its own context, which is used to save the URL and the crawled results. You can learn related methods in our previous examples.
 
 # Saving and using the crawled results
