@@ -8,7 +8,7 @@
 
 The program reads a number n from the command line,  sorts the random n positive integers in ascending order, and then sorts the results in descending order. You can add the second parameter "p” to the program, and then it can be sorted in parallel. For example:  
  ./sort\_task 100000000 p   
-The above command will sort 100 million integers in ascending order and then in descending order. The two sorting are done in parallel.
+The above command will sort 100 million integers in ascending order and then in descending order. The two sortings are done in parallel respectly.
 
 # About computing tasks
 
