@@ -115,7 +115,7 @@ Both the retry times and the redirection times of this HTTP task is 0, because t
 
 In fact, the above four lines generates a HTTP request to the web server. req is the received HTTP request, and it will be moved directly to the new request via **std::move()**.   
 The first line removes the `http://host:port` in the request\_uri and keeps the part after the path.   
-The second line and the third line specify the parsed HTTP body as the HTTP body for output. The reason for this operation is that in the HttpMessage implementation, the body obtained by parsing and the body in the request are two domains, so we need to simply set it here, without copying the memory.   
+The second line and the third line specify the parsed HTTP body as the HTTP body for output. The reason for this operation is that in the HttpMessage implementation, the http body obtained by parsing and the http body to send out are two fields, so we need to simply set it here, without copying the memory.   
 The fourth line transfers the request content to the request sent to the web server at one time. After the HTTP request is constructed, the request is placed at the end of the current series, and the process function ends.
 
 # Principles behind an asynchronous server
