@@ -78,7 +78,7 @@ The framework uses self-consistent logic to reasonably avoid/reduce this possibi
   * In every 10 seconds, the "just" expired domain name will receive one more (only one more) DNS resolution.
   * In order to prevent this mutual exclusion logic from affecting performance, the framework uses a double check lock mode to accelerate processing and effectively avoid mutex competition.
   * Again, please note that it is only valid for the "just" expired domain name, and doesn’t work on those having expired long ago.
-  * To know more, please refer to the source code at DNSCache.
+  * To know more, please refer to the source code at [DNSCache](../src/manager/DNSCache.h).
   
 The framework has the following two scenarios that will face a large number of DNS resolutions towards the same domain name at the same time:
 
