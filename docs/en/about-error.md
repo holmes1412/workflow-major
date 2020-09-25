@@ -6,13 +6,13 @@ In the interfaces we exposed to users, we try to make things as simple as possib
 ### Disabling C++ exceptions
 
 C++ exceptions are not used in our framework. When you compile your own code, it is best to add **-fno-exceptions** flag to reduce the code size.   
-According to the common practice in the industry, we ignore the possibility of the failure of new operation, and avoid using new to allocate large blocks of memory internally. And there are error checks in memory allocation in C style.
+According to the common practice in the industry, we ignore the possibility of the failure of **new** operation, and avoid using new to allocate large blocks of memory internally. And there are error checks in memory allocation in C style.
 
 ### About factory functions
 
 From the previous examples, you can see that all task and series are generated from two factory classes, WFTaskFactory or Workflow.   
 These factory classes, as well as more factory class interfaces that we may encounter in the future, ensure success. In other words, they never return NULL. And you do not need to check the return value.   
-To achieve this goal, even when the URL is illegal, the factory still generates the task normally. And you can get the error again in the callback of the task.
+To achieve this goal, even when the URL is illegal, the factory still generates the task normally. And you will get the error in the callback of the task.
 
 ### States and error codes of a task
 
@@ -46,7 +46,7 @@ enum
 
 ##### Please note the following states:
 
-* SUCCESS: the task is successfully completed. The client receives the complete reply, or the server writes the reply completely into the send buffer (but there is no guarantee that the other party will receive it).
+* SUCCESS: the task is successfully completed. The client receives the complete reply, or the server writes the reply completely into the send buffer (but there is no guarantee that the peer will receive it).
 * SYS\_ERROR: system error. In this case, use **task->get\_error()** to get the system error code **errno**.
   * When **get\_error()** gets ETIMEDOUT, you can call **task->get\_timeout\_reason()** to get the timeout reasons.
 * DNS\_ERROR: DNS resolution error. Use **get\_error()** to get the return code of **getaddrinfo()**. For DNS, please see the article for details [about-dns.md](./about-dns.md). 
