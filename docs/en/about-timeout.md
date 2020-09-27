@@ -1,10 +1,10 @@
 # About timeout
 
 In order to make all communication tasks run as accurately as expected by users, the framework provides a large number of timeout configuration functions and ensure the accuracy of these timeouts.   
-Some of these timeout configurations are global, such as connection timeout, and you can configure your own connection timeout for a domain name through the upstream.
+Some of these timeout configurations are global, such as connection timeout, but you may configure your own connection timeout for a perticular domain name through the upstream.
 Some timeouts are task-level, such as sending a message completely, because users needs to dynamically configure this value according to the message size.   
 Of course, a server may have its own overall timeout configuration. In a word, timeout is a complicated matter, and the framework will do it accurately.   
-All timeouts are in poll style. It is an int in milliseconds and -1 means infinite.   
+All timeouts are in **poll** style. It is an **int** in milliseconds and -1 means infinite.   
 In addition, as said in the project introduction, you can ignore all the configurations, and adjust them when you meet the actual requirements.
 
 ### Timeout configuration for basic communication
@@ -29,7 +29,7 @@ static constexpr struct EndpointParams ENDPOINT_PARAMS_DEFAULT =
 };
 ~~~
 
-in which there are three DNS-related configuration items.
+in which there are three DNS-related configuration items. Please ignore them right now. Items related to timeout:  
 
 * connect\_timeout: timeout for establishing a connection with the target. The default value is 10 seconds.
 * response\_timeout: timeout for waiting for the target response; the default value is 10 seconds. It is the timeout for sending a block of data to the target or reading a block of data from the target.
@@ -68,7 +68,7 @@ static constexpr struct WFGlobalSettings GLOBAL_SETTINGS_DEFAULT =
 
 in which there is one timeout related configuration item: EndpointParams endpoint\_params
 
-You can perform operations like the following  to change the global configuration before calling any of our factory functions:
+You can perform operations like the following to change the global configuration before calling any of our factory functions:
 
 ~~~cpp
 int main()
@@ -81,8 +81,8 @@ int main()
 ~~~
 
 The above example changes the connection timeout to 2 seconds, and the server response timeout is infinite. In this configuration, the timeout for receiving complete messages must be configured in each task, otherwise it may fall into infinite waiting.   
-The global DNS configuration can be overridden by the configuration for an individual address in the upstream feature. For example, you can specify a connection timeout for a specific domain name.   
-In Upstream, each AddressParams also has  the EndpointParams endpoint\_params item, and you can configure it in the same way as you configure the Global item.   
+The global configuration can be overridden by the configuration for an individual address in the upstream feature. For example, you can specify a connection timeout for a specific domain name.   
+In Upstream, each AddressParams also has the EndpointParams endpoint\_params item, and you can configure it in the same way as you configure the Global item.   
 For the detailed structures, please see [upstream documents.](tutorial-10-upstream.md#Address)
 
 ### Configuring server timeout
@@ -126,7 +126,7 @@ If a Redis client wants to close the connection after a request, you need to use
 ### Timeout for synchronous task waiting 
 
 There is a very special timeout configuration, and it is the only global synchronous waiting timeout. It is not recommended,  but you can get good results with it in some application scenarios.   
-In the current framework, the target server has a connection limit (you can set it in both global and upstream configurations). If the number of connection shas reached the upper limit,  the client task fails and returns an error by default.   
+In the current framework, the target server has a connection limit (you can set it in both global and upstream configurations). If the number of connections have  reached the upper limit,  the client task fails and returns an error by default.   
 In the callback, **task->get\_state ()** gets WFT\_STATE\_SYS\_ERROR, and **task->get\_error()** gets EAGAIN. If the task is configured with retry, a retry will be automatically initiated.   
 Here, it is allowed to configure a synchronous waiting timeout through the **task->set\_wait\_timeout()** interface. If a connection is released during this time period, the task can occupy this connection.   
 If you sets wait\_timeout and does not get the connection before the timeout, the callback will get WFT\_STATE\_SYS\_ERROR status and ETIMEDOUT error.
@@ -152,7 +152,7 @@ Communication tasks contain a **get\_timeout\_reason()** interface, which is use
 
 ### Implementation of timeout functions
 
-Within the framework, there are more types of timeouts than those we show here. Except for wait\_timeout, all of them depend on the timer\_fd on Linux, one for each epoll thread.   
-By default, the number of epoll threads is 2, which can meet the requirments of most applications.   
-The current timeout algorithm uses the data structure of linked list and red-black tree. Its time complexity is between O(1) and O(logn), where n is the fd number of the epoll threads.   
+Within the framework, there are more types of timeouts than those we show here. Except for wait\_timeout, all of them depend on the timer\_fd on Linux or kqueue timer on BSD system, one for each poller thread.   
+By default, the number of poller threads is 4, which can meet the requirements of most applications.   
+The current timeout algorithm uses the data structure of linked list and red-black tree. Its time complexity is between O(1) and O(logn), where n is the fd number of the a poller thread.   
 Currently timeout processing is not the bottleneck, because the time complexity of related calls of epoll in Linux kernel is also O(logn). If the time complexity of all timeouts in our framework reaches O(1), there is no much difference.
