@@ -46,13 +46,12 @@ static constexpr struct WFGlobalSettings GLOBAL_SETTING_DEFAULT =
     .handler_threads    =    20,
     .compute_threads    =    -1
 };
-//compute_threads<=0 means auto-set by system cpu number
 ~~~
 
 where the DNS-related configuration items include:
 
 * dns\_threads: the number of threads in the DNS thread pool, 4 by default.
-* dns\_ttl\_default: default TTL in DNS Cache in seconds, 13 hours by default; DNS cache is used by the current process, and will be destroyed when the process exists. The configuration is valid only for the current process.
+* dns\_ttl\_default: default TTL in DNS Cache in seconds, 12 hours by default; DNS cache is used by the current process, and will be destroyed when the process exists. The configuration is valid only for the current process.
 * dns\_ttl\_min: minimum DNS ttl value, in seconds, 3 minutes by default, which is used to decide whether to retry DNS resolution after communication failure.
 
 To put it simply, in every communication, the system will check TTL to decide whether to refresh DNS resolution.   
@@ -65,7 +64,7 @@ For the detailed structures, please see [upstream documents](./about-upstream.md
 ### Handling at TTL expiration moment under high concurrency
 
 At the moment when the TTL is exceeded, if a large number of concurrent requests are sent to a domain name, a large amount of DNS resolution for that domain name may occur at the same time.   
-The framework uses a self-consistent logic to reasonably avoids/reduces this possibility:
+The framework uses a self-consistent logic to reasonably avoid/reduce this possibility:
 
 * When the results are obtained from DNS Cache, if the TTL is exceeded, the TTL will be increased by 10 seconds, and then the TTL expiration will be returned. All happen under the protection of a Mutex.
 * If a large number of requests flood in at the moment of TTL expiration, under the protection of this Mutex, \[the first request] will get the expired results and initiate DNS resolution, while other requests will continue to use the old results within 10 seconds.
