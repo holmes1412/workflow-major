@@ -8,9 +8,9 @@ We have a complete mechanism to manage the services we depend on. This mechanism
 * Service circuit breaker and recovery.
 * Load balancing.
 * Configuring independent parameters for a single service.
-* Master/slave relations for a service, etc.
+* Main/backup relations for a service, etc.
 
-All these functions depend on our upstream subsystem. By making good use of this system, we can easily realize more complex service mesh functions.
+All these functions depend on our upstream subsystem. By making good use of this system, we can easily implement more complex service mesh functions.
 
 # upstream name
 
@@ -49,11 +49,11 @@ public:
 };
 ~~~
 
-The three functions create three types of upstream: consistent hash, random weight and manual selection.   
+The three functions create three types of upstream: consistent hash, weighted random and manual selection.   
 The parameter **name** means upstream name, which is used in the same way as a domain name after creation.   
 **consistent\_hash** and **select** parameters are both **std::function** of **upstream\_route\_t**, which are used to specify the routing method.   
 And try\_another indicates whether to continue trying to find an available target if the selected target is unavailable (blown). consistent\_hash mode does not have this attribute.   
-The upstream\_route\_t parameter receives three parameters: path, query and fragment in a URL. For example, if the URL is http://abc.com/home/index.html?a=1#bottom, the three parameters are "/home/index.html", "a=1” and "bottom” respectively. Based  on these three parts, the system can select the target server or perform consistent hashing.   
+The upstream\_route\_t parameter receives three parameters: path, query and fragment in a URL. For example, if the URL is http://abc.com/home/index.html?a=1#bottom, the three parameters are "/home/index.html", "a=1” and "bottom” respectively. Based on these three parts, the system can select the target server or perform consistent hashing.   
 Please note that you call pass nullptr to all consistent\_hash parameters in the above interfaces, and the framework will use the default consistent hash algorithm.
 
 # Example 1: weight allocation
@@ -82,8 +82,8 @@ int main()
 }
 ~~~
 
-Please note that these functions can be called in any scenario. They are completely thread-safe and takes effect in real time.   
-When the task is created, the upstream target selection has already completed. In the HTTP task, if the selected target is 127.0.0.1:8000, then the content in the Host header of the request is 127.0.0.1:8000 instead of www.sogou.com. Therefore, you may modify it if necessary:
+Please note that these functions can be called in any scenario. They are completely thread-safe and takes effect instantly.   
+When a task is created, the upstream target selection has already completed. In the HTTP task, if the selected target is 127.0.0.1:8000, then the content in the Host header of the request is 127.0.0.1:8000 instead of www.sogou.com. Therefore, you may modify it if necessary:
 
 ~~~cpp
     WFHttpTask *task = WFTaskFactory::create_http_task("http://www.sogou.com/index.html", ...);
@@ -125,7 +125,7 @@ int main()
 ~~~
 
 Because Redis and MySQL protocols are provided natively, it is very convenient to realize the read-write separation function of the database with this method (Note: non-transactional operation).   
-In the above two examples, the upstream name is www.sogou.com, which is also a domain name. Of course, you can use a simple string sogou to create tasks:
+In the above two examples, the upstream name is www.sogou.com, which is also a domain name. Of course, you can use a simpler string sogou as upstream name. Thus:
 
 ~~~cpp
     WFHttpTask *task = WFTaskFactory::create_http_task("http://sogou/home/1.html?abc", ...);
@@ -180,15 +180,13 @@ struct AddressParams
     unsigned int dns_ttl_min;              ///< in seconds, DNS TTL when network request fail
 /**
  * - The max_fails directive sets the number of consecutive unsuccessful attempts to communicate with the server.
- * - After 30s following the server failure, upstream probe the server with some live client’s requests.
- * - If the probes have been successful, the server is marked as a live one.
+ * - After 30s following the server failure, upstream probe the server with some alive client’s requests.
+ * - If the probes have been successful, the server is marked as an alive one.
  * - If max_fails is set to 1, it means server would out of upstream selection in 30 seconds when failed only once
  */
     unsigned int max_fails;                ///< [1, INT32_MAX] max_fails = 0 means max_fails = 1
     unsigned short weight;                 ///< [1, 65535] weight = 0 means weight = 1. only for master
-#define SERVER_TYPE_MASTER    0
-#define SERVER_TYPE_SLAVE     1
-    int server_type;                       ///< default is SERVER_TYPE_MASTER
+    int server_type;                       ///< 0 for main and 1 for backup
     int group_id;                          ///< -1 means no group. Slave without group will backup for any master
 };
 ~~~
@@ -203,10 +201,10 @@ For example, if the global maximum number of connections to each target IP is 20
     UpstreamManager::upstream_add_server("10.135.35.53", "10.135.35.53", &params);
 ~~~
 
-max\_failures parameter indicates the maximum number of failure. If the selected target continuously fails, and the number of failure reaches max\_failures, it will enter the fusing state. If the try\_another attribute of upstream is false, the task will fail. 
+max\_fails parameter indicates the maximum number of failure. If the selected target continuously fails, and the number of failure reaches max\_failures, it will enter the fusing state. If the try\_another attribute of upstream is false, the task will fail. 
 In the callback of the task, get\_state()=WFT\_STATE\_TASK\_ERROR，get\_error()=WFT\_ERR\_UPSTREAM\_UNAVAILABLE.   
 If try\_another is true and all server are blown, you will get the same error. The fusing time is 30 seconds.   
-Server\_type and group\_id are used for master/slave features. All upstream must have a server whose type is MASTER, otherwise the upstream is unavailable.   
-SLAVE servers will be used when the MASTER of the same group\_id is blown.
+Server\_type and group\_id are used for main/backup features. All upstream must have a server whose type is 0, representing main, otherwise the upstream is unavailable.   
+Backup servers (server_type 1) will be used when the main servers of the same group\_id is blown.
 
 For more information on the features of upstream, please see [about-upstream.md](./about-upstream.md).
