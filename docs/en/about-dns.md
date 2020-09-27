@@ -11,7 +11,7 @@ TTL (Time To Live) refers to the amount of time a DNS record is considered up-to
 
 ### DNS methods in the framework
 
-Currently the framework directly calls the system function **getaddrinfo** to resolve domain names:
+Currently the framework directly calls the system function **getaddrinfo** to resolve domain names. Some details:
 
 1. When the DNS Cache of the framework is hit and its TTL is valid, DNS resolution will not happen.
 2. When the domain name belongs to IPv4, IPv6 or unix-domain-socket, DNS resolution will not happen.
