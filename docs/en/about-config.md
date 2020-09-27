@@ -31,7 +31,7 @@ static constexpr struct WFGlobalSettings GLOBAL_SETTINGS_DEFAULT =
 };
 ~~~
 
-[EndpointParams.h](../src/manager/EndpointParams.h) defines the struts for EndpointParams and the default values.
+[EndpointParams.h](../src/manager/EndpointParams.h) defines the struture of EndpointParams and the default values.
 
 ~~~cpp
 
@@ -71,12 +71,12 @@ int main()
 
 ~~~
 
-Most of the parameters are self-explanatory. Note: the ttl and related parameters in DNS configuration are in **seconds**. The timeout for endpoint is in **milliseconds**, and -1 indicates unlimited time.   
+Most of the parameters are self-explanatory. Note: the ttl and related parameters in DNS configuration are in **seconds**. The timeout for endpoint is in **milliseconds**, and -1 indicates an infinite timeout.   
 dns\_threads indicates the total number of threads accessing DNS in parallel. Currently, you may access DNS through the system function **getaddrinfo**. If you want to tune the parallel performance of DNS, you can increase this value.   
 compute\_threads indicates the number of threads used for computation. The default value is -1, meaning the number of threads is the same as the number of CPU cores in the current node.   
 poller\_threads and handler\_threads are the two parameters for tuning network performance:
 
 * poller\_threads is mainly used for epoll (kqueue) and message deserialization.
-* handler\_threads is the thread for the callback and the process of a network task.
+* handler\_threads is the number of threads for the callback and the process of a network task.
 
-All resources required by the framework are applied for when they are used for the first time. For example, if a user task does not involve DNS resolution, the DNS thread will not be started.
+All resources required by the framework are applied for when they are used for the first time. For example, if a user task does not involve DNS resolution, the DNS thread will not be created.
