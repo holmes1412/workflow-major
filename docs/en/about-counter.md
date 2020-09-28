@@ -1,6 +1,6 @@
 # About counter
 
-Counters are very important basic tasks in our framework. A counter is essentially a semaphore that does not occupy threads.   
+Counters are very important basic tasks in our framework. A counter is essentially a semaphore that does not occupy thread.   
 Counters are mainly used for workflow control. It includes anonymous counters and named counters, and can realize very complex business logic.
 
 # Creating a counter
@@ -25,7 +25,7 @@ class WFTaskFactory
 ~~~
 
 Each counter contains a target\_value. When the count in the counter reaches the target\_value, its callback is called.   
-The above two interfaces generate a anonymous counter and a named counter respectively. The anonymous calculator directly increases the count through the count method in the WFCounterTask:
+The above two interfaces generate a anonymous counter and a named counter respectively. The anonymous counter directly increases the count through the count method in the WFCounterTask:
 
 ~~~cpp
 class WFCounterTask
@@ -96,7 +96,7 @@ int main(int argc, char *argv[])
 ~~~
 
 The above code creates a counter with the target value as url\_count, and calls the count once after each HTTP task is completed.   
-Note that the value of anonymous counter cannot exceed the target value. Otherwise the counter may have been destroyed in the callback, and the program behavior is undefined.   
+Note that the times **count()** a anonymous counter cannot exceed it's target value. Otherwise the counter may have been destroyed after the callback, and the program behavior is undefined.   
 The call of **counter->start()** can be placed before the for loop. After a counter is created, you can call its count interface, no matter whether the counter has been started or not.   
 You can also use **counter->WFCounterTask::count()** to call the count interface of an anonymous counter; this can be used in performance-sensitive applications.
 
@@ -193,7 +193,7 @@ When you **call WFTaskFactory::count\_by\_name(name, n)**:
   * according to the order of creation, take the first counter and assume that its remaining value is m:
     * if m is greater than n, the count value is increased by n. end (the remaining value is m-n).
     * if m is less than or equal to n, the counting is completed, the callback is called, and the counter is destroyed. set n = n-m.
-      * If n is 0, the program ends.
+      * If n is 0, the procedure ends.
       * If n is greater than 0, take out the next counter with the same name and repeat the whole operation.
 
 Although the description is very complicated, it can be summed up in one sentence. Access all counters with that name according to the order of creation one by one until n is 0.   
@@ -217,4 +217,4 @@ public:
 };
 ~~~
 
-You can read the codes on demand. Since WFTaskFactory does not provide a factory function, you have to call new to create a container task.
+You can read the codes on demand. Since WFTaskFactory does not provide a factory function, you have to call **new** to create a container task.
