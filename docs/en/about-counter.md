@@ -43,7 +43,7 @@ If a counter\_name is passed when you create a counter, a named counter is gener
 
 # Creating parallel tasks with anonymous counters
 
-In the example of [parallel wget](/en/tutorial-06-parallel_wget.md), we created a ParallelWork to achieve the parallel execution of several series.   
+In the example of [parallel wget](/docs/en/tutorial-06-parallel_wget.md), we created a ParallelWork to achieve the parallel execution of several series.   
 With the combination of ParallelWork and SeriesWork, you can build series-parallel graphs in any form, which can meet the requirements in most scenarios.   
 Counters allow us to build more complex dependencies between the tasks, such as a fully connected neural network.   
 The following simple code can replace ParallelWork to realize parallel HTTP crawling.
