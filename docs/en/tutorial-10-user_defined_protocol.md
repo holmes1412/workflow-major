@@ -1,6 +1,6 @@
 # A simple user-defined protocol: client/server 
 
-# Sample code
+# Sample codes
 
 [message.h](../tutorial/tutorial-10-user_defined_protocol/message.h)  
 [message.cc](../tutorial/tutorial-10-user_defined_protocol/message.cc)  
@@ -14,12 +14,12 @@ This example designs a simple communication protocol, and builds a server and a 
 # Protocol format
 
 The protocol message contains one 4-byte head and one message body. Head is an integer in network byte order, indicating the length of body.   
-The formats of the request messages and the response messages are consistent.
+The formats of the request messages and the response messages are identical.
 
 # Protocol implementation
 
 A user-defined protocol should provide its own serialization and deserialization methods, which are virtual functions in ProtocolMeessage class.   
-In addition, for the convenience of use, we strongly recommend users to implement the move structure and move assignment for messages (for std::move ()). [ProtocolMessage.h](../src/protocol/ProtocolMessage.h) contains the following serialization and deserialization interfaces:
+In addition, for the convenience of use, we strongly recommend users to implement the **move constructor** and **move assignment** for messages (for std::move ()). [ProtocolMessage.h](../src/protocol/ProtocolMessage.h) contains the following serialization and deserialization interfaces:
 
 ~~~cpp
 namespace protocol
@@ -45,7 +45,7 @@ private:
 
 * The encode function is called before the message is sent, and it is called only once for each message.
 * In the encode function, you need to serialize the message into a vector array, and the number of array elements must not exceed max. Current the value of max is 8192.
-* For the definition of struct iovec, please see  the system calls readv and writev.
+* For the definition of **struct iovec**, please see the system calls **readv** or **writev**.
 * Normally the return value of the encode function is between 0 and max, indicating how many vector are used in the message.
   * In case of UDP protocol, please note that the total length must not be more than 64k, and no more than 1024 vectors are used (in Linux, writev writes only 1024 vectors at one time).
     * UDP protocol can only be used for a client, and UDP server cannot be realized.
@@ -57,7 +57,6 @@ private:
 * The append function is called every time a data block is received. Therefore, for each message, it may be called multiple times.
 * buf and size are the content and the length of received data block respectively. You need to move the data content.
   * If the interface **append(const void \*buf, size\_t \*size)** is implemented, you can tell the framework how much length is consumed at this time by modifying \* size. remaining size = received size - consumed size, and the remaining part of the buf will be received again when the append is called next time. This function is more convenient for protocol parsing. Of course, you can also move the whole content and manage it by yourself. In this case, you do not need to modify \*size.
-  * If UDP protocol is used, you must append a complete data packet in each appending.
 * If the **append** function returns 0, it indicates that the message is incomplete and the transmission continues. The return value of 1 indicates the end of the message. -1 indicates errors, and you need to set errno.
 * In a word, the append function is used to tell the framework whether the message transmission is completed or not. Please don't perform complicated and unnecessary protocol parsing in the append.
 
@@ -91,7 +90,7 @@ using TutorialResponse = TutorialMessage;
 ~~~
 
 Both the request class and the response class belong to the same type of messages. You can directly introduce them with using.   
-Note that both the request and the response can be constructed without parameters. In other words, you must provide a constructor without parameters or no constructor.   
+Note that both the request and the response can be constructed without parameters. In other words, you must provide a constructor without parameters or no constructor. In addition, the response object may be destroyed and reconstruct during communication if retrial occurs, therefore it should be a RAII class, otherwise things will be complicated).  
 [message.cc](../tutorial/tutorial-10-user_defined_protocol/message.cc) contains the implementation of encode and append:
 
 ~~~cpp
@@ -169,6 +168,7 @@ When you use append, you should ensure that the 4-byte head is received complete
 The append implements the size\_limit function, and an EMSGSIZE error will be returned if the size\_limit is exceeded. You can ignore the size_limit field if you don't need to limit the message size.  
 Because we require the communication protocol is two way with a request and a response, users do not need to consider the so-called "TCP packet sticking" problem. The problem should be treated as an error message directly.  　
 Now, with the definition and implementation of messages, we can build a server and a client.
+
 # Server and client definitions
 
 With the request and response classes, we can build a server and a client based on this protocol. The previous example explains the type definitions related to an HTTP protocol:
@@ -233,7 +233,7 @@ public:
 };
 ~~~
 
-Among them, TransportType specifies the transport layer protocol, and the current options include TT\_TCP, TT\_UDP, TT\_SCTP and TT\_TCP\_SSL.   
+Among them, TransportType specifies the transport layer protocol, and the current options include TT\_TCP, TT\_UDP, TT\_SCTP, TT\_TCP\_SSL and TT\_SCTP\_SSL.   
 There is little difference between the three interfaces. In our example, the URL is not needed for the time being. We use a domain name and a port to create a task.   
 The actual code is shown as follows. We inherited the WFTaskFactory class, but this derivation is not required.
 

@@ -9,7 +9,7 @@ In several server examples, the **stop()** operation is blocking, which can ensu
 Generally, as long as you writes the program normally and follows the methods in the examples, there is little doubt about exit. However, it is still necessary to define the conditions for normal program exit.
 
 * You can't call **exit()** of the system in any callback functions such as the callback or the process, otherwise the behavior is undefined.
-* The condition that a main thread can safely end (call **exit()** or return in the main function) is that all tasks have been run to callbacks and no new tasks have been called.
+* The condition that a main thread can safely end (call **exit()** or return in the main function) is that all tasks have been run to callbacks and no new tasks is started.
   * All our examples are consistent with this assumption, waking up the main function in the callback. This is safe, and there is no need to worry about the situation where the callback is not finished when the main function returns.
   * ParallelWork is a kind of tasks, which also needs to run to its callback.
   * This rule can be violated under certain circumstances where the procedural behavior is strictly defined. However, if you don't understand the core principles, you should abide by this principle, otherwise the program can't exit normally.
@@ -18,9 +18,9 @@ Generally, as long as you writes the program normally and follows the methods in
 As long as the above three conditions are met, the program can exit normally without any memory leakage. Despite the strict definition, please note the conditions for the completion of a server stop.
 
 * The call of **stop()** on a server will wait for the callbacks of all server tasks to finish (the callback is empty by default) and no new server tasks are processed.
-* However, if you start a new task in the process, which is not in the series of the server task, the framework can't stop it, and the server stop can't wait for the completion of this task.
+* However, the framework can't stop you from starting a new task in the process, and not added to the series of the server task. The server **stop()** can't wait for the completion of this new task.
 * Similarly, if the user adds a new task (such as logging) to the series of the server task in its callback, the new task is not controlled by the server.
-* In both cases, if the main function exits immediately after **server.stop()**, it may violate the second rule above. Because there are still some tasks that have not run to their callback.
+* In both cases, if the main function exits immediately after **server.stop()**, it may violate the second rule above. Because there may still be tasks that have not run to their callback.
 
 In the above situation, you need to ensure that the started task has run to its callback. You can use a counter to record the number of running tasks, and wait for the count value to reach 0 before the main function returns.   
 In the following example, in the callback of a server task, a log file writing task is added to the current series (assuming that file writing is very slow and asynchronous IO needs to be started once).
@@ -70,7 +70,7 @@ Although the above method is feasible, it does increase the complexity and the e
 
 # About memory leakage of OpenSSL 1.1 in exiting
 
-We found that some OpenSSL 1.1 versions have the problem of incomplete memory release in exiting. The memory leak can be seen by Valgrind memcheck  tool.   
+We found that some OpenSSL 1.1 versions have the problem of incomplete memory release in exiting. The memory leak can be seen by Valgrind memcheck tool.   
 This problem only happens when you use SSL, such as crawling HTTPS web pages, and usually you can ignore this leak. If it must be solved, you can use the following method:
 
 ~~~cpp
