@@ -2,10 +2,10 @@
 
 # Sample codes
 
-[message.h](../tutorial/tutorial-10-user_defined_protocol/message.h)  
-[message.cc](../tutorial/tutorial-10-user_defined_protocol/message.cc)  
-[server.cc](../tutorial/tutorial-10-user_defined_protocol/server.cc)  
-[client.cc](../tutorial/tutorial-10-user_defined_protocol/client.cc)
+[message.h](/tutorial/tutorial-10-user_defined_protocol/message.h)  
+[message.cc](/tutorial/tutorial-10-user_defined_protocol/message.cc)  
+[server.cc](/tutorial/tutorial-10-user_defined_protocol/server.cc)  
+[client.cc](/tutorial/tutorial-10-user_defined_protocol/client.cc)
 
 # About user\_defined\_protocol
 
@@ -19,7 +19,7 @@ The formats of the request messages and the response messages are identical.
 # Protocol implementation
 
 A user-defined protocol should provide its own serialization and deserialization methods, which are virtual functions in ProtocolMeessage class.   
-In addition, for the convenience of use, we strongly recommend users to implement the **move constructor** and **move assignment** for messages (for std::move ()). [ProtocolMessage.h](../src/protocol/ProtocolMessage.h) contains the following serialization and deserialization interfaces:
+In addition, for the convenience of use, we strongly recommend users to implement the **move constructor** and **move assignment** for messages (for std::move ()). [ProtocolMessage.h](/src/protocol/ProtocolMessage.h) contains the following serialization and deserialization interfaces:
 
 ~~~cpp
 namespace protocol
@@ -69,7 +69,7 @@ private:
 * Please do not use a negative errno. Because negative numbers are used inside the framework to indicate SSL errors.
 
 In our example, the serialization and deserialization of messages are very simple.   
-The header file [message.h](../tutorial/tutorial-10-user_defined_protocol/message.h) declares the request class and the response class.
+The header file [message.h](/tutorial/tutorial-10-user_defined_protocol/message.h) declares the request class and the response class.
 
 ~~~cpp
 namespace protocol
@@ -91,7 +91,7 @@ using TutorialResponse = TutorialMessage;
 
 Both the request class and the response class belong to the same type of messages. You can directly introduce them with using.   
 Note that both the request and the response can be constructed without parameters. In other words, you must provide a constructor without parameters or no constructor. In addition, the response object may be destroyed and reconstruct during communication if retrial occurs, therefore it should be a RAII class, otherwise things will be complicated).  
-[message.cc](../tutorial/tutorial-10-user_defined_protocol/message.cc) contains the implementation of encode and append:
+[message.cc](/tutorial/tutorial-10-user_defined_protocol/message.cc) contains the implementation of encode and append:
 
 ~~~cpp
 namespace protocol
@@ -198,13 +198,13 @@ using tutorial_process_t = std::function<void (WFTutorialTask *)>;
 # server
 
 There is no difference between this server and an ordinary HTTP server. We give priority to IPv6 startup, which does not affect the client requests in IPv4. In addition, the maximum request size is limited to 4KB.   
-Please see [server.cc](../tutorial/tutorial-10-user_defined_protocol/server.cc) for the complete code.
+Please see [server.cc](/tutorial/tutorial-10-user_defined_protocol/server.cc) for the complete code.
 
 # client
 
 The logic of the client is to receive the user input from standard IO, construct a request, send it to the server and get the results.   
 For simplicity, the process of reading standard input is completed in the callback, so we will send an empty request first. Also, for the sake of security, we limit the packet size of the server reply to 4KB.   
-The only thing that a client needs to know is how to generate a client task on a user-defined protocol. There are three interface options in [WFTaskFactory.h](../src/factory/WFTaskFactory.h):
+The only thing that a client needs to know is how to generate a client task on a user-defined protocol. There are three interface options in [WFTaskFactory.h](/src/factory/WFTaskFactory.h):
 
 ~~~cpp
 template<class REQ, class RESP>
@@ -260,7 +260,7 @@ public:
 
 You can see that we used the WFNetworkTaskFactory\<TutorialRequest, TutorialResponse> class to create a client task.   
 Next, by calling the **set\_keep\_alive()** interface of the task, the connection is kept for 30 seconds after the communication is completed. Otherwise, the short connection will be used by default.   
-The previous examples have explained the knowledge in other codes of the above client. Please see [client.cc](../tutorial/tutorial-10-user_defined_protocol/client.cc).
+The previous examples have explained the knowledge in other codes of the above client. Please see [client.cc](/tutorial/tutorial-10-user_defined_protocol/client.cc).
 
 # How is the request on an built-in protocol generated
 
