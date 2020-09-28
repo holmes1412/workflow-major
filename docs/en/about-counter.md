@@ -43,7 +43,7 @@ If a counter\_name is passed when you create a counter, a named counter is gener
 
 # Creating parallel tasks with anonymous counters
 
-In the example of [parallel wget](./tutorial-06-parallel_wget.md), we created a ParallelWork to achieve the parallel execution of several series.   
+In the example of [parallel wget](/en/tutorial-06-parallel_wget.md), we created a ParallelWork to achieve the parallel execution of several series.   
 With the combination of ParallelWork and SeriesWork, you can build series-parallel graphs in any form, which can meet the requirements in most scenarios.   
 Counters allow us to build more complex dependencies between the tasks, such as a fully connected neural network.   
 The following simple code can replace ParallelWork to realize parallel HTTP crawling.
@@ -204,7 +204,7 @@ The counters can be used to realize very complex business logic if you can use t
 
 A counter is like a kind of semaphore, and every count operation cannot be accompanied with operation data, which is often inconvenient.   
 If you consider a counter as a node on a directed acyclic graph and each count is an incoming edge. Then, the node can have attributes, but the incoming edge does not contain any information.   
-WFContainerTask is a task that adds attributes to the incoming edge. [WFContainerTask.h](../src/factory/WFContainerTask.h) contains relevant definitions:
+WFContainerTask is a task that adds attributes to the incoming edge. [WFContainerTask.h](/src/factory/WFContainerTask.h) contains relevant definitions:
 
 ~~~cpp
 template<tyename T>
