@@ -22,7 +22,7 @@ There is also a user\_data field in the timer task that can be used to transfer 
 
 # Advanced features of a timer
 
-In [About exit](./about-exit.md), you learn that the condition that a main thread can safely end (calls **exit()** or return in the main function) is that all tasks have been run to the callback and no new task is started.   
+In [About exit](/docs/en/about-exit.md), you learn that the condition that a main thread can safely end (calls **exit()** or return in the main function) is that all tasks have been run to the callback and no new task is started.   
 Then, there may be a problem. As the maximum duration of a timer exceeds one hour and it cannot be interrupted actively, if you wait for the timer to expire, it will take a long time for the program to exit.   
 In practice, exiting the program can interrupt the timer and make it return to the callback. If the timer is interrupted by exiting the program, **get\_state()** will return a WFT\_STATE\_ABORTED state.   
 Of course, if the timer is interrupted by exiting the program, no new tasks can be started.   
