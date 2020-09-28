@@ -17,16 +17,16 @@ class WFTaskFactory
 };
 ~~~
 
-The first parameter is the duration in millisecond. Unless the program is terminated, the timer cannot be terminated early.   
-There is also a user\_data field in the timer task that can be used to transfer some user data. Its starting method is the same as other tasks, and the procedure for adding it into the task flow is also the same.
+The first parameter is the duration in microseconds. Unless the program is terminated, the timer cannot be terminated early.   
+There is also a user\_data field in the timer task that can be used to transfer some user data. Its starting method is the same as other tasks, and the procedure for adding it into the workflow is also the same.
 
 # Advanced features of a timer
 
-In [About exit](./about-exit.md), you learn that the condition that a main thread can safely end (calls **exit()** or return in the main function) is that all tasks have been run to the callback and no new tasks have been called.   
+In [About exit](./about-exit.md), you learn that the condition that a main thread can safely end (calls **exit()** or return in the main function) is that all tasks have been run to the callback and no new task is started.   
 Then, there may be a problem. As the maximum duration of a timer exceeds one hour and it cannot be interrupted actively, if you wait for the timer to expire, it will take a long time for the program to exit.   
 In practice, exiting the program can interrupt the timer and make it return to the callback. If the timer is interrupted by exiting the program, **get\_state()** will return a WFT\_STATE\_ABORTED state.   
 Of course, if the timer is interrupted by exiting the program, no new tasks can be started.   
-The following program crawls one HTTP page at every one second. When all URLs are crawled, the program exits directly without waiting for the timer to return to the callback, and there will be no delay in exiting.
+The following program demonstrates crawling one HTTP page at every one second. When all URLs are crawled, the program exits directly without waiting for the timer to return to the callback, and there will be no delay in exiting.
 
 ~~~cpp
 bool program_terminate = false;
