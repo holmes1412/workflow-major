@@ -4,7 +4,7 @@ In nginx, Upstream represents the load balancing configuration of the reverse pr
 
 1. Each Upstream is an independent reverse proxy
 2. Accessing an Upstream is equivalent to using an appropriate strategy to select one in a group of services/targets/upstream and downstream for access
-3. Upstream has load balancing, error handling and service management capabilities.
+3. Upstream has load balancing, error handling and service governance capabilities.
 
 ### Advantages of Upstream over domain name DNS resolution
 
@@ -101,7 +101,7 @@ Basic principles
 
 1. Select a target randomly
 2. If try_another is configured as true, one of all surviving targets will be selected randomly
-3. Select in the master only, the master and slave of the group where the selected target is located and the slave without group are regarded as valid optional objects
+3. Select in the main servers only, the mains and backups of the group where the selected target is located and the backup without group are regarded as valid optional objects
 
 ### Example 2 Random access among multiple targets based on weights
 
@@ -127,7 +127,7 @@ Basic principles
 
 1. According to the weight distribution, randomly select a target, the greater the weight is, the greater the probability is
 2. If try_another is configured as true, one of all surviving targets will be selected randomly as per weights.
-3. Select in the master only, the master and slave of the group where the selected target is located and the slave without group are regarded as valid optional objects
+3. Select in the main servers only, the main and backup of the group where the selected target is located and the slave without group are regarded as valid optional objects
 
 ### Example 3 Access among multiple targets based on the framework's default consistent hash
 
@@ -152,7 +152,7 @@ Basic principles
 2. The framework will use std::hash to calculate the address + virtual index of all nodes as the node value of the consistent hash
 3. The framework will use std::hash to calculate path+query+fragment as a consistent hash data value
 4. Choose the value nearest to the surviving node as the target each time
-5. For each master, as long as there is a master in surviving group/a slave in surviving group/a surviving no group slave, it is regarded as surviving
+5. For each main, as long as there is a main in surviving group/a backup in surviving group/a surviving no group backup, it is regarded as surviving
 
 ### Example 4 User-defined consistent hash function
 
@@ -212,22 +212,22 @@ http_task->start();
 
 Basic principles
 
-1. he framework first determines the selection in the master list according to the normal selection function provided by the user, based on the modulus
-2. For each master, as long as there is a master in surviving group/a slave in surviving group/a surviving no group slave, it is regarded as surviving
+1. The framework first determines the selection in the main server list according to the normal selection function provided by the user, based on the modulus
+2. For each main server, as long as there is a main server in surviving group/a backup in surviving group/a surviving no group backup, it is regarded as surviving
 3. If the selected target no longer survives and try_another is set as true, a second selection will be made using consistent hash function
 4. If the second selection is triggered, the consistent hash will ensure that a survival target will be selected, unless all machines are blown
 
-### Example 6 Simple master-slave mode
+### Example 6 Simple main-backup mode
 ~~~cpp
 UpstreamManager::upstream_create_weighted_random(
     "simple.name",
-    true);//One master, one slave, nothing is different in this item
+    true);//One main, one backup, nothing is different in this item
 
 AddressParams address_params = ADDRESS_PARAMS_DEFAULT;
-address_params.server_type = SERVER_TYPE_MASTER;
-UpstreamManager::upstream_add_server("simple.name", "master01.test.ted.bj.sogou", &address_params);// Master
-address_params.server_type = SERVER_TYPE_SLAVE;
-UpstreamManager::upstream_add_server("simple.name", "slave01.test.ted.gd.sogou", &address_params);//Slave
+address_params.server_type = 0;   /* 1 for main server */
+UpstreamManager::upstream_add_server("simple.name", "main01.test.ted.bj.sogou", &address_params);// main
+address_params.server_type = 1;   /* 0 for backup server */
+UpstreamManager::upstream_add_server("simple.name", "backup01.test.ted.gd.sogou", &address_params);//backup
 
 auto *http_task = WFTaskFactory::create_http_task("http://simple.name/request", 0, 0, nullptr);
 auto *redis_task = WFTaskFactory::create_redis_task("redis://simple.name/2", 0, nullptr);
@@ -236,34 +236,34 @@ redis_task->get_req()->set_query("MGET", {"key1", "key2", "key3", "key4"});
 ~~~
 
 Basic principles
-1. The master-slave mode does not conflict with any of the modes shown above, and it can take effect at the same time
-2. The number of master/slave is independent of each other and there is no limit. All masters are coequal to each other, and all slaves are coequal to each others, but master and slave are not coequal to each other.
-3. As long as master is alive, the request will always use a certain master
-4. If all masters are blown, slave will take over the request as a substitute target until master work well again
-5. In every strategy, surviving slave can be used as the basis for the survival of master
+1. The main-backup mode does not conflict with any of the modes shown above, and it can take effect at the same time
+2. The number of main/backup is independent of each other and there is no limit. All main servers are coequal to each other, and all backup servers are coequal to each others, but main and backup are not coequal to each other.
+3. As long as a main server is alive, the request will always use a main server.
+4. If all main servers are blown, backup server will take over the request as a substitute target until main server works well again
+5. In every strategy, surviving backup can be used as the basis for the survival of main
 
-### Example 7 Master-slave + consistent hash + grouping
+### Example 7 Main-backup + consistent hash + grouping
 ~~~cpp
 UpstreamManager::upstream_create_consistent_hash(
     "abc.local",
     nullptr);//nullptr represents using the default consistent hash function of the framework 
 
 AddressParams address_params = ADDRESS_PARAMS_DEFAULT;
-address_params.server_type = SERVER_TYPE_MASTER;
+address_params.server_type = 0;
 address_params.group_id = 1001;
-UpstreamManager::upstream_add_server("abc.local", "192.168.2.100:8081", &address_params);//master in group 1001
-address_params.server_type = SERVER_TYPE_SLAVE;
+UpstreamManager::upstream_add_server("abc.local", "192.168.2.100:8081", &address_params);//main in group 1001
+address_params.server_type = 1;
 address_params.group_id = 1001;
-UpstreamManager::upstream_add_server("abc.local", "192.168.2.100:8082", &address_params);//slave for group 1001
-address_params.server_type = SERVER_TYPE_MASTER;
+UpstreamManager::upstream_add_server("abc.local", "192.168.2.100:8082", &address_params);//backup for group 1001
+address_params.server_type = 0;
 address_params.group_id = 1002;
-UpstreamManager::upstream_add_server("abc.local", "master01.test.ted.bj.sogou", &address_params);//master in group 1002
-address_params.server_type = SERVER_TYPE_SLAVE;
+UpstreamManager::upstream_add_server("abc.local", "backup01.test.ted.bj.sogou", &address_params);//main in group 1002
+address_params.server_type = 1;
 address_params.group_id = 1002;
-UpstreamManager::upstream_add_server("abc.local", "slave01.test.ted.gd.sogou", &address_params);//slave for group 1002
-address_params.server_type = SERVER_TYPE_SLAVE;
+UpstreamManager::upstream_add_server("abc.local", "backup01.test.ted.gd.sogou", &address_params);//backup for group 1002
+address_params.server_type = 1;
 address_params.group_id = -1;
-UpstreamManager::upstream_add_server("abc.local", "test.sogou.com:8080", &address_params);//slave for no group mean slave for all group and no group
+UpstreamManager::upstream_add_server("abc.local", "test.sogou.com:8080", &address_params);//backup with no group mean backup for all groups and no group
 UpstreamManager::upstream_add_server("abc.local", "abc.sogou.com");//master, no group
 
 auto *http_task = WFTaskFactory::create_http_task("http://abc.local/service/method", 0, 0, nullptr);
@@ -274,10 +274,10 @@ Basic principles
 
 1. Group number -1 means no group, this kind of target does not belong to any group
 2. The masters without a group are coequal to each other, and they can even be regarded as one group. But they are isolated from the master with a group
-3. A slave without a group can serve as a slave for any group target of Global/any target without a group
-4. The group number can identify which master and slave are working together
-5. The slaves of different groups are isolated from each other, and they serve the master of their own group only
-6. Add the default group number -1 of the target, and the type is master
+3. A backup without a group can serve as a backup for any group target of Global/any target without a group
+4. The group number can identify which main and backup are working together
+5. The backups of different groups are isolated from each other, and they serve the main servers of their own group only
+6. Add the default group number -1 of the target, and the type is main
 
 # Upstream selection strategy
 
@@ -286,7 +286,7 @@ When the URIHost of the url that initiates the request is filled with UpstreamNa
 1. Weight random strategy: selection randomly according to weight
 2. Consistent hashing strategy: The framework uses a standard consistent hashing algorithm, and users can define the consistent hash function consistent_hash for the requested uri
 3. Manual strategy: make definite selection according to the select function that user provided for the requested uri, if the blown target is selected: a. If try_another is false, this request will return to failure b. If try_another is true, the framework uses standard consistent hash algorithm to make a second selection, and the user can define the consistent hash function consistent_hash for the requested uri
-4. Master-slave strategy: According to the priority of master first, slave next, select master as long as it can be used. This strategy can take effect concurrently with any of [1], [2], and [3], and they influence each other.
+4. Main-backup strategy: According to the priority of main first, backup next, select a main server as long as it can be used. This strategy can take effect concurrently with any of [1], [2], and [3], and they influence each other.
 5. Round-robin/weighted-round-robin: regarded as equivalent to [1], not available for now
 
 The framework recommends common users to use strategy [2], which can ensure that the cluster has good fault tolerance and scalability
@@ -318,9 +318,7 @@ struct AddressParams
     unsigned int dns_ttl_min;
     unsigned int max_fails;
     unsigned short weight;
-#define SERVER_TYPE_MASTER    0
-#define SERVER_TYPE_SLAVE     1
-    int server_type;
+    int server_type;   /* 0 for main and 1 for backup. */
     int group_id;
 };
 
@@ -330,8 +328,8 @@ static constexpr struct AddressParams ADDRESS_PARAMS_DEFAULT =
     .dns_ttl_default    =    12 * 3600,
     .dns_ttl_min        =    180,
     .max_fails          =    200,
-    .weight             =    1,    //only for master of UPSTREAM_WEIGHTED_RANDOM
-    .server_type        =    SERVER_TYPE_MASTER,
+    .weight             =    1,    //only for main of UPSTREAM_WEIGHTED_RANDOM
+    .server_type        =    0,
     .group_id           =    -1,
 };
 ~~~
@@ -343,8 +341,8 @@ Each address can be configured with custom parameters:
   * dns_ttl_min: The shortest effective time of dns in seconds, and the default value is 3 minutes. It is used to decide whether to perform dns again when communication fails and retry.
   * max_fails: the number of [continuous] failures that triggered fusing (Note: each time the communication is successful, the count will be cleared)
   * Weight: weight, the default value is 1, which is only valid for master. It is used for Upstream random strategy selection, the larger the weight is, the easier it is to be selected; this parameter is meaningless under other strategies
-  * server_type: master/slave configuration, master by default. At any time, the masters in the same group is always at higher priority than other slaves
-  * group_id: basis for grouping, the default value is -1. -1 means no grouping (free). A free slave can be regarded as slave to any master. Any slave with group is always at higher priority than any free slave.
+  * server_type: main/backup configuration, main by default (server_type=0). At any time, the main servers in the same group are always at higher priority than backups
+  * group_id: basis for grouping, the default value is -1. -1 means no grouping (free). A free backup can be regarded as backup to any main server. Any backup with group is always at higher priority than any free backup.
 
 # About fuse
 
@@ -381,13 +379,13 @@ Please note that if one of the following 1-4 scenarios is met, the communication
 
  1. Weight random strategy, all targets are in the fusing period
  2. Consistent hash strategy, all targets are in the fusing period
- 3. Manual strategy &&try_another==true, all targets are in the fusing period
- 4. Manual strategy &&try_another==false, and all the following three conditions shall meet at the same time:
+ 3. Manual strategy and try_another==true, all targets are in the fusing period
+ 4. Manual strategy and try_another==false, and all the following three conditions shall meet at the same time:
 
-    1). The master selected by the select function is in the fusing period, and all free devices are in the fusing period
-    
-    2). The master is a free master, or other targets in the group where the master is located are all in the fusing period
-    
+    1). The main selected by the select function is in the fusing period, and all free devices are in the fusing period
+
+    2). The main is a free main, or other targets in the group where the main is located are all in the fusing period
+
     3). All free devices are in the fusing period
   
 # Upstream port priority
