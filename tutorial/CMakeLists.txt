@@ -81,10 +81,14 @@ endif ()
 set(DIR10 tutorial-10-user_defined_protocol)
 add_executable(server ${DIR10}/server.cc ${DIR10}/message.cc)
 add_executable(client ${DIR10}/client.cc ${DIR10}/message.cc)
+add_executable(channel_client ${DIR10}/channel_client.cc ${DIR10}/message.cc)
 target_link_libraries(server ${WORKFLOW_LIB})
 target_link_libraries(client ${WORKFLOW_LIB})
+target_link_libraries(channel_client ${WORKFLOW_LIB})
 
 set_target_properties(server PROPERTIES
 	RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/${DIR10})
 set_target_properties(client PROPERTIES
+	RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/${DIR10})
+set_target_properties(channel_client PROPERTIES
 	RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/${DIR10})
