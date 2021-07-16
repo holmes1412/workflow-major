@@ -9,9 +9,11 @@ set(SRC
 	http_parser.c
 	HttpMessage.cc
 	HttpUtil.cc
+	websocket_parser.c
+	WebSocketMessage.cc
 )
 
-if (MYSQL STREQUAL "y")
+if (NOT MYSQL STREQUAL "n")
 	set(SRC
 		${SRC}
 		mysql_stream.c
@@ -22,7 +24,7 @@ if (MYSQL STREQUAL "y")
 	)
 endif ()
 
-if (REDIS STREQUAL "y")
+if (NOT REDIS STREQUAL "n")
 	set(SRC
 		${SRC}
 		redis_parser.c

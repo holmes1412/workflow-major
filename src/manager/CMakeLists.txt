@@ -4,10 +4,11 @@ project(manager)
 set(SRC
 	DnsCache.cc
 	RouteManager.cc
+	WFCondition.cc
 	WFGlobal.cc
 )
 
-if (UPSTREAM STREQUAL "y")
+if (NOT UPSTREAM STREQUAL "n")
 	set(SRC
 		${SRC}
 		UpstreamManager.cc
