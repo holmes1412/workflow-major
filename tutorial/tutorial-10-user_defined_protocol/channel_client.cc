@@ -47,8 +47,7 @@ int main(int argc, const char *argv[])
 	url = argv[1];
 
 	// 0. construct channel with process function
-	auto *channel = new WFComplexChannel<TutorialMessage>(NULL,
-							WFGlobal::get_scheduler(), process);
+	auto *channel = WFChannelFactory<TutorialMessage>::create_channel(process);
 
 	// 1. init and set uri
 	ParsedURI uri;
@@ -61,16 +60,14 @@ int main(int argc, const char *argv[])
 
 	char buf[1024] = "TutorialMessage from channel_client.\n";
 	// 2. task1 -> connect -> upgrade -> [recieve many | send many] -> task1-cb
-	auto *task1 = new ComplexChannelOutTask<TutorialMessage>(channel,
-			WFGlobal::get_scheduler(),
+	auto *task1 = WFChannelFactory<TutorialMessage>::create_out_task(channel,
 			[](WFChannelTask<TutorialMessage> *task) {
 		fprintf(stderr, "finish sending task1 and now channel can receive.\n");
 	});
 	task1->get_msg()->set_message_body(buf, 1024);
 
 	//3. you can use one series to make sending in sequence
-	auto *task2 = new ComplexChannelOutTask<TutorialMessage>(channel,
-			WFGlobal::get_scheduler(),
+	auto *task2 = WFChannelFactory<TutorialMessage>::create_out_task(channel,
 			[](WFChannelTask<TutorialMessage> *task) {	
 		if (task->get_state() == WFT_STATE_SUCCESS)
 		{
