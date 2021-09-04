@@ -1,0 +1,23 @@
+name: master ci
+
+on:
+  push:
+    branches: [ master ]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: make
+      env:
+        COMPILER: g++-8 
+        BUILD: Release
+        STANDARD: 11
+      run: make
+    - name: make check
+      run: make check
+    - name: make tutorial
+      run: make tutorial
