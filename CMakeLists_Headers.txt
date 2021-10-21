@@ -72,11 +72,14 @@ set(INCLUDE_HEADERS
 	src/manager/WFFuture.h
 	src/manager/WFFacilities.h
 	src/manager/WFFacilities.inl
+	src/manager/WFCoTask.h
 	src/util/EncodeStream.h
 	src/util/LRUCache.h
 	src/util/StringUtil.h
 	src/util/URIParser.h
 	src/util/MD5Util.h
+	src/util/BasicList.h
+	src/util/BasicQueue.h
 	src/factory/WFConnection.h
 	src/factory/WFTask.h
 	src/factory/WFTask.inl
