@@ -130,3 +130,12 @@ set_target_properties(bootstrap PROPERTIES
 	RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/${DIR16})
 set_target_properties(bootstrap_server PROPERTIES OUTPUT_NAME "server"
 	RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/${DIR16})
+
+set(DIR18 tutorial-18-mul_mat)
+add_executable(mul_mat
+			   ${DIR18}/mul_mat.cc)
+include_directories(/root/workflow/workflow-major/tutorial/${DIR18})
+target_link_libraries(mul_mat ${WORKFLOW_LIB})
+set_target_properties(mul_mat PROPERTIES
+	RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/${DIR18})
+
