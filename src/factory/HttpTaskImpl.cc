@@ -32,6 +32,8 @@
 #include "WFGlobal.h"
 #include "HttpUtil.h"
 #include "SSLWrapper.h"
+#include "PackageWrapper.h"
+#include "WFHttpStreamingClient.h"
 
 using namespace protocol;
 
@@ -841,6 +843,86 @@ bool ComplexHttpProxyTask::finish_once()
 	return true;
 }
 
+class ComplexHttpStreamingTask : public ComplexHttpTask
+{
+protected:
+	using chunk_callback_t = std::function<void (HttpMessageChunk *)>;
+
+public:
+    ComplexHttpStreamingTask(int retry_max,
+							 int redirect_max,
+							 chunk_callback_t&& chunk_cb,
+							 http_callback_t&& task_cb)
+        : ComplexHttpTask(retry_max, redirect_max, std::move(task_cb)),
+		wrapper_(this),
+		chunk_cb(std::move(chunk_cb))
+    {
+        HttpRequest *client_req = this->get_req();
+		client_req->set_http_version("HTTP/1.1");
+
+		HttpResponse *client_resp = this->get_resp();
+		client_resp->parse_zero_body();
+	}
+
+protected:
+	class SSEWrapper : public PackageWrapper
+	{
+	protected:
+		virtual ProtocolMessage *next_in(ProtocolMessage *message);
+
+	protected:
+		ComplexHttpStreamingTask *task_;
+
+	public:
+		SSEWrapper(ComplexHttpStreamingTask *task) :
+			PackageWrapper(task->get_resp())
+		{
+			task_ = task;
+		}
+	};
+
+protected:
+	SSEWrapper wrapper_;
+	HttpMessageChunk chunk_msg;
+	chunk_callback_t chunk_cb;
+//    std::function<void (HttpMessageChunk *)> chunk_cb;
+
+protected:
+    virtual CommMessageIn *message_in();
+};
+
+CommMessageIn *ComplexHttpStreamingTask::message_in()
+{
+	return &wrapper_;
+}
+
+ProtocolMessage *
+ComplexHttpStreamingTask::SSEWrapper::next_in(ProtocolMessage *message)
+{
+	HttpMessageChunk *chunk_msg = &task_->chunk_msg;
+	const void *chunk;
+	size_t size;
+	bool finished = false;
+
+	if (chunk_msg->get_chunk(&chunk, &size))
+	{
+		if (size == 0)
+		{
+			finished = true;
+		}
+		else
+		{
+			task_->chunk_cb(chunk_msg);
+
+			HttpMessageChunk msg;
+			*(protocol::ProtocolMessage *)&msg = std::move(task_->chunk_msg);
+			task_->chunk_msg = std::move(msg);
+		}
+	}
+
+	return finished ? NULL : &task_->chunk_msg;
+}
+
 /**********Client Factory**********/
 
 WFHttpTask *WFTaskFactory::create_http_task(const std::string& url,
@@ -906,6 +988,20 @@ WFHttpTask *WFTaskFactory::create_http_task(const ParsedURI& uri,
 	task->set_user_uri(uri);
 	task->set_keep_alive(HTTP_KEEPALIVE_DEFAULT);
 	task->init(proxy_uri);
+	return task;
+}
+
+WFHttpTask *WFHttpStreamingClient::create_streaming_task(int redirect_max,
+														 int retry_max,
+														 chunk_callback_t cb,
+														 http_callback_t task_cb)
+{
+	auto *task = new ComplexHttpStreamingTask(redirect_max, retry_max,
+											  std::move(cb),
+											  std::move(task_cb));
+
+	task->init(this->uri);
+	task->set_watch_timeout(this->timeout);
 	return task;
 }
 
