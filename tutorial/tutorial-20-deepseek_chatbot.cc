@@ -22,7 +22,8 @@ WFHttpChunkedClient client;
 
 const char *model = "deepseek-reasoner";
 bool stream = true;
-int ttft = 100; // time to first token = 100 seconds
+int ttft; // time to first token (seconds)
+int tpft; // time per output token (seconds)
 
 enum
 {
@@ -44,7 +45,6 @@ bool parse_json_message(const json_value_t *choice)
 	const json_object_t *choice_obj = json_value_object(choice);
 
 	const json_value_t *obj = json_object_find("message", choice_obj);
-	fprintf(stderr, "find message\n");
 	if (!obj || json_value_type(obj) != JSON_VALUE_OBJECT)
 		return false;
 
@@ -52,12 +52,11 @@ bool parse_json_message(const json_value_t *choice)
 
 	if (strcmp(model, "deepseek-reasoner") == 0)
 	{
-		fprintf(stderr, "find reasoning\n");
 		val = json_object_find("reasoning_content", message_obj);	
 		if (!val || json_value_type(val) != JSON_VALUE_STRING)
 			return false;
 
-		fprintf(stderr, "\n<think>");
+		fprintf(stderr, "\n<think>\n");
 		str = json_value_string(val);
 		if (str && str[0] != '\0')
 			fprintf(stderr, "\n%s\n", str);
@@ -66,14 +65,13 @@ bool parse_json_message(const json_value_t *choice)
 	}
 
 	message_obj = json_value_object(obj);
-	fprintf(stderr, "find content\n");
 	val = json_object_find("content", message_obj);
 	if (!val || json_value_type(val) != JSON_VALUE_STRING)
 		return false;
 
 	str = json_value_string(val);
 	if (str && str[0] != '\0')
-		fprintf(stderr, "\n%s\n", str);
+		fprintf(stderr, "\n%s\n\n", str);
 
 	return true;
 }
@@ -216,6 +214,12 @@ void extract(WFHttpChunkedTask *task)
 
 	if (chunk->get_chunk_data(&msg, &size))
 	{
+		if (stream == false)
+		{
+			parse_json(static_cast<const char *>(msg), size);
+			return;
+		}
+
 		const char *p = static_cast<const char *>(msg);
 		const char *msg_end = p + size;
 		const char *begin;
@@ -246,51 +250,6 @@ void extract(WFHttpChunkedTask *task)
 		fprintf(stderr, "Error. Invalid chunk data.\n");
 }
 
-void http_callback(WFHttpTask *task)
-{
-	protocol::HttpRequest *req = task->get_req();
-	protocol::HttpResponse *resp = task->get_resp();
-	int state = task->get_state();
-	int error = task->get_error();
-
-	fprintf(stderr, "Task state: %d\n", state);
-
-	if (state != WFT_STATE_SUCCESS)
-	{
-		fprintf(stderr, "Task error: %d\n", error);
-		if (error == ETIMEDOUT)
-			fprintf(stderr, "Timeout reason: %d\n", task->get_timeout_reason());
-		return;
-	}
-
-	std::string output = protocol::HttpUtil::decode_chunked_body(resp);
-	parse_json(output.data(), output.length());
-
-	fprintf(stderr, "%s %s %s\r\n", req->get_method(),
-									req->get_http_version(),
-									req->get_request_uri());
-
-	std::string name;
-	std::string value;
-	protocol::HttpHeaderCursor req_cursor(req);
-
-	while (req_cursor.next(name, value))
-		fprintf(stderr, "%s: %s\r\n", name.c_str(), value.c_str());
-	fprintf(stderr, "\r\n");
-
-	fprintf(stderr, "%s %s %s\r\n", resp->get_http_version(),
-									resp->get_status_code(),
-									resp->get_reason_phrase());
-
-	protocol::HttpHeaderCursor resp_cursor(resp);
-
-	while (resp_cursor.next(name, value))
-		fprintf(stderr, "%s: %s\r\n", name.c_str(), value.c_str());
-	fprintf(stderr, "\r\n");
-
-	return next_query(series_of(task));
-}
-
 void callback(WFHttpChunkedTask *task)
 {
 	protocol::HttpRequest *req = task->get_req();
@@ -303,8 +262,6 @@ void callback(WFHttpChunkedTask *task)
 	if (state != WFT_STATE_SUCCESS)
 	{
 		fprintf(stderr, "Task error: %d\n", error);
-//		if (error == ETIMEDOUT)
-//			fprintf(stderr, "Timeout reason: %d\n", task->get_timeout_reason());
 		return;
 	}
 
@@ -331,7 +288,7 @@ void callback(WFHttpChunkedTask *task)
 		fprintf(stderr, "%s: %s\r\n", name.c_str(), value.c_str());
 	fprintf(stderr, "\r\n");
 
-	return next_query(series_of(task));
+	next_query(series_of(task));
 }
 
 void next_query(SeriesWork *series)
@@ -339,6 +296,7 @@ void next_query(SeriesWork *series)
 	int len;
 	char query[MAX_CONTENT_LENGTH];
 	protocol::HttpRequest *req;
+	WFHttpChunkedTask *next;
 	std::string body;
 
 	fprintf(stderr, "Query> ");
@@ -357,25 +315,14 @@ void next_query(SeriesWork *series)
 		query[len - 1] = '\0';
 		body = prompt.append(query).append(type);
 
-		if (stream)
-		{
-			auto *task = client.create_chunked_task(url,
-													REDIRECT_MAX,
-													extract,
-													callback);
-			task->set_watch_timeout(ttft * 1000);
-			req = task->get_req();
-			series->push_back(task);
-		} else {
-			auto *task = WFTaskFactory::create_http_task(url,
-														 REDIRECT_MAX,
-														 0,
-														 http_callback);
-			task->set_watch_timeout(ttft * 1000 * 5); // use 500s no streaming
-			req = task->get_req();
-			series->push_back(task);
-		}
+		next = client.create_chunked_task(url,
+										  REDIRECT_MAX,
+										  extract,
+										  callback);
 
+		next->set_watch_timeout(ttft * 1000); // time to get the first byte
+		next->set_recv_timeout(tpft * 1000); // time to receive each chunk
+		req = next->get_req();
 		req->add_header_pair("Authorization", auth);
 		req->add_header_pair("Content-Type", "application/json");
 		req->add_header_pair("Connection", "keepalive");
@@ -383,6 +330,7 @@ void next_query(SeriesWork *series)
 		req->append_output_body(body.c_str(), body.size());
 
 		state = CHAT_STATE_BEGIN;
+		series->push_back(next);
 		break;
 	}
 
@@ -446,25 +394,22 @@ int main(int argc, char *argv[])
 
 	if (stream == true)
 	{
+		ttft = 100;
+		tpft = 1;
 		type = R"("}],
 	"stream": true
   }
 
 )";
 	} else {
+		ttft = 500;
+		tpft = 100;
 		type = R"("}],
 	"stream": false
   }
 
 )";
 	}
-
-	struct WFGlobalSettings settings = GLOBAL_SETTINGS_DEFAULT;
-	settings.endpoint_params.connect_timeout = 60 * 1000;
-	if (stream == false)
-		settings.endpoint_params.response_timeout = ttft * 1000 * 5; // 500s for no streaming
-
-	WORKFLOW_library_init(&settings);
 
 	WFCounterTask *counter = WFTaskFactory::create_counter_task(0, [](WFCounterTask *task) {
 		return next_query(series_of(task));
