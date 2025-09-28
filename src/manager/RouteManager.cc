@@ -18,6 +18,8 @@
 
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <netdb.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -76,8 +78,10 @@ private:
 #endif
 };
 
+using RouteTargetTCP_SSL = RouteTargetTCP;
+
 /* To support TLS SNI. */
-class RouteTargetTCPSNI : public RouteTargetTCP
+class RouteTargetTCP_TLS_SNI : public RouteTargetTCP_SSL
 {
 private:
 	virtual int init_ssl(SSL *ssl)
@@ -92,12 +96,14 @@ private:
 	std::string hostname;
 
 public:
-	RouteTargetTCPSNI(const std::string& name) : hostname(name)
+	RouteTargetTCP_TLS_SNI(const std::string& name) : hostname(name)
 	{
 	}
 };
 
-class RouteTargetSCTPSNI : public RouteTargetSCTP
+using RouteTargetSCTP_SSL = RouteTargetSCTP;
+
+class RouteTargetSCTP_TLS_SNI : public RouteTargetSCTP_SSL
 {
 private:
 	virtual int init_ssl(SSL *ssl)
@@ -112,7 +118,7 @@ private:
 	std::string hostname;
 
 public:
-	RouteTargetSCTPSNI(const std::string& name) : hostname(name)
+	RouteTargetSCTP_TLS_SNI(const std::string& name) : hostname(name)
 	{
 	}
 };
@@ -186,22 +192,26 @@ RouteResultEntry::create_target(const struct RouteParams *params,
 
 	switch (params->transport_type)
 	{
-	case TT_TCP_SSL:
-		if (params->use_tls_sni)
-			target = new RouteTargetTCPSNI(params->hostname);
-		else
 	case TT_TCP:
-			target = new RouteTargetTCP();
+		target = new RouteTargetTCP();
 		break;
 	case TT_UDP:
 		target = new RouteTargetUDP();
 		break;
+	case TT_SCTP:
+		target = new RouteTargetSCTP();
+		break;
+	case TT_TCP_SSL:
+		if (params->use_tls_sni)
+			target = new RouteTargetTCP_TLS_SNI(params->hostname);
+		else
+			target = new RouteTargetTCP_SSL;
+		break;
 	case TT_SCTP_SSL:
 		if (params->use_tls_sni)
-			target = new RouteTargetSCTPSNI(params->hostname);
+			target = new RouteTargetSCTP_TLS_SNI(params->hostname);
 		else
-	case TT_SCTP:
-			target = new RouteTargetSCTP();
+			target = new RouteTargetSCTP_SSL;
 		break;
 	default:
 		errno = EINVAL;

@@ -52,6 +52,9 @@ WFServiceGovernance::~WFServiceGovernance()
 {
 	for (EndpointAddress *addr : this->servers)
 		delete addr;
+
+	pthread_rwlock_destroy(&this->rwlock);
+	pthread_mutex_destroy(&this->breaker_lock);
 }
 
 PolicyAddrParams::PolicyAddrParams()
@@ -139,23 +142,6 @@ void WFSGResolverTask::dispatch()
 	{
 		this->WFResolverTask::dispatch();
 		return;
-	}
-
-	if (sg_->pre_select_)
-	{
-		WFConditional *cond = sg_->pre_select_(this);
-		if (cond)
-		{
-			series_of(this)->push_front(cond);
-			this->set_has_next();
-			this->subtask_done();
-			return;
-		}
-		else if (this->state != WFT_STATE_UNDEFINED)
-		{
-			this->subtask_done();
-			return;
-		}
 	}
 
 	if (sg_->select(ns_params_.uri, tracing, &addr))
@@ -273,9 +259,13 @@ void WFServiceGovernance::success(RouteManager::RouteResult *result,
 	auto *v = &tracing_data->history;
 	EndpointAddress *server = (*v)[v->size() - 1];
 
-	pthread_rwlock_wrlock(&this->rwlock);
-	this->recover_server_from_breaker(server);
-	pthread_rwlock_unlock(&this->rwlock);
+	server->fail_count = 0;
+	if (server->entry.list.next)
+	{
+		pthread_rwlock_wrlock(&this->rwlock);
+		this->recover_server_from_breaker(server);
+		pthread_rwlock_unlock(&this->rwlock);
+	}
 
 	this->WFNSPolicy::success(result, tracing, target);
 }
@@ -321,10 +311,12 @@ void WFServiceGovernance::check_breaker_locked(int64_t cur_time)
 
 void WFServiceGovernance::check_breaker()
 {
-	pthread_mutex_lock(&this->breaker_lock);
 	if (!list_empty(&this->breaker_list))
+	{
+		pthread_mutex_lock(&this->breaker_lock);
 		this->check_breaker_locked(GET_CURRENT_SECOND);
-	pthread_mutex_unlock(&this->breaker_lock);
+		pthread_mutex_unlock(&this->breaker_lock);
+	}
 }
 
 void WFServiceGovernance::try_clear_breaker()

@@ -1,11 +1,11 @@
-cmake_minimum_required(VERSION 3.6)
+cmake_minimum_required(VERSION 3.10)
 
 set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "build type")
 set(CMAKE_SKIP_RPATH TRUE)
 
 project(
 	workflow
-	VERSION 0.11.9
+	VERSION 0.11.11
 	LANGUAGES C CXX
 )
 
@@ -38,7 +38,6 @@ macro(makeLink src dest target)
 	add_custom_command(
 		TARGET ${target} PRE_BUILD
 		COMMAND ${CMAKE_COMMAND} -E copy_if_different ${src} ${dest}
-		DEPENDS ${dest}
 	)
 endmacro()
 

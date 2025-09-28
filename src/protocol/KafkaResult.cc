@@ -27,10 +27,9 @@ enum
 	KAFKA_STATUS_END,
 };
 
-KafkaResult::KafkaResult()
+KafkaResult::~KafkaResult()
 {
-	this->resp_vec = NULL;
-	this->resp_num = 0;
+	delete []this->resp_vec;
 }
 
 KafkaResult& KafkaResult::operator= (KafkaResult&& move)
