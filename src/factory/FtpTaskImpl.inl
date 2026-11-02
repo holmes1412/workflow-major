@@ -48,10 +48,20 @@ public:
 										int retry_max,
 										__ftp_callback_t callback);
 
+	/* 'RNFR' in the request, and then 'RNTO to' if the server accepts it.
+	 * The reply is of 'RNFR' if it failed. */
+	static __WFFtpTask *create_rename_task(const ParsedURI& uri,
+										   const std::string& session,
+										   int retry_max,
+										   const std::string& to,
+										   __ftp_callback_t callback);
+
 	/* A task for a transfer command in the request, such as 'RETR'. The
-	 * passive address is requested before the command. 'prepare' is called
-	 * with the address of the data connection, and 'start' is called after
-	 * the command is sent, when the data connection should be started. */
+	 * passive address is requested first, and the command is sent right
+	 * after the passive reply, on the same connection. Then 'prepare' is
+	 * called with the address of the data connection, and 'start' is called
+	 * to start it. Both are called in a network thread. The receive timeout
+	 * of the task limits the waiting for the completion reply. */
 	static __WFFtpTask *create_transfer_task(const ParsedURI& uri,
 											 const std::string& session,
 											 int retry_max,

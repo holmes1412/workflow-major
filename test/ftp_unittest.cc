@@ -17,9 +17,11 @@
 */
 
 #include <errno.h>
+#include <ftw.h>
 #include <poll.h>
 #include <signal.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 #include <unistd.h>
@@ -28,6 +30,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <atomic>
+#include <chrono>
 #include <map>
 #include <mutex>
 #include <string>
@@ -36,6 +39,7 @@
 #include <gtest/gtest.h>
 #include "workflow/FtpMessage.h"
 #include "workflow/WFFtpClient.h"
+#include "workflow/WFFtpServer.h"
 #include "workflow/WFFacilities.h"
 #include "workflow/WFTaskError.h"
 
@@ -48,6 +52,12 @@ public:
 	{
 		return this->encode(vectors, max);
 	}
+
+	int test_append(const std::string& str, size_t *size)
+	{
+		*size = str.size();
+		return this->append(str.data(), size);
+	}
 };
 
 class TestFtpResponse : public FtpResponse
@@ -57,6 +67,11 @@ public:
 	{
 		*size = str.size();
 		return this->append(str.data(), size);
+	}
+
+	int test_encode(struct iovec vectors[], int max)
+	{
+		return this->encode(vectors, max);
 	}
 
 	int renew_count = 0;
@@ -103,6 +118,64 @@ TEST(ftp_unittest, request_encode)
 
 	req.set_command("DE LE", "a");
 	EXPECT_EQ(req.test_encode(vectors, 4), -1);
+}
+
+TEST(ftp_unittest, request_append)
+{
+	const std::string data = "RETR /pub/a file.txt\r\n";
+	const std::string extra = "NOOP\r\n";
+	TestFtpRequest pwd;
+	TestFtpRequest big;
+	size_t size;
+
+	for (size_t i = 1; i < data.size(); i++)
+	{
+		TestFtpRequest req;
+
+		ASSERT_EQ(req.test_append(data.substr(0, i), &size), 0);
+		ASSERT_EQ(req.test_append(data.substr(i) + extra, &size), 1);
+		ASSERT_EQ(size, data.size() - i);
+		ASSERT_EQ(req.get_command(), "RETR");
+		ASSERT_EQ(req.get_argument(), "/pub/a file.txt");
+	}
+
+	EXPECT_EQ(pwd.test_append("PWD\n", &size), 1);
+	EXPECT_EQ(pwd.get_command(), "PWD");
+	EXPECT_EQ(pwd.get_argument(), "");
+
+	big.set_size_limit(8);
+	EXPECT_EQ(big.test_append("RETR 123", &size), 0);
+	EXPECT_EQ(big.test_append("4", &size), -1);
+	EXPECT_EQ(errno, EMSGSIZE);
+}
+
+TEST(ftp_unittest, response_encode)
+{
+	TestFtpResponse resp;
+	TestFtpResponse parsed;
+	struct iovec vectors[4];
+	std::string wire;
+	size_t size;
+
+	EXPECT_EQ(resp.test_encode(vectors, 4), 0);
+	resp.set_reply(226, "Transfer complete.");
+	ASSERT_EQ(resp.test_encode(vectors, 4), 1);
+	EXPECT_EQ(std::string((char *)vectors[0].iov_base, vectors[0].iov_len),
+			  "226 Transfer complete.\r\n");
+
+	resp.set_reply(211, "Features:\n EPSV\n211 not the end\nEnd");
+	ASSERT_EQ(resp.test_encode(vectors, 4), 1);
+	wire.assign((char *)vectors[0].iov_base, vectors[0].iov_len);
+	EXPECT_EQ(wire, "211-Features:\r\n EPSV\r\n 211 not the end\r\n"
+					"211 End\r\n");
+	ASSERT_EQ(parsed.test_append(wire, &size), 1);
+	EXPECT_EQ(parsed.get_reply_code(), 211);
+	EXPECT_EQ(parsed.get_reply_text(),
+			  "Features:\n EPSV\n 211 not the end\nEnd");
+
+	resp.set_reply(257, "\"/a\rb\"");
+	EXPECT_EQ(resp.test_encode(vectors, 4), -1);
+	EXPECT_EQ(errno, EBADMSG);
 }
 
 TEST(ftp_unittest, response_single_line)
@@ -194,6 +267,19 @@ TEST(ftp_unittest, response_any_split)
 			ASSERT_EQ(resp.renew_count, 1);
 		}
 	}
+}
+
+TEST(ftp_unittest, line_limit)
+{
+	TestFtpResponse resp;
+	TestFtpRequest req;
+	std::string line(64 * 1024, 'x');
+	size_t size;
+
+	EXPECT_EQ(resp.test_append("211-" + line, &size), -1);
+	EXPECT_EQ(errno, EMSGSIZE);
+	EXPECT_EQ(req.test_append("NOOP " + line, &size), -1);
+	EXPECT_EQ(errno, EMSGSIZE);
 }
 
 TEST(ftp_unittest, response_error)
@@ -384,7 +470,17 @@ private:
 		char tmp[4096];
 		ssize_t n;
 
-		if (cmd == "RETR")
+		if (cmd == "RETR" && arg == "/hang")
+		{
+			/* Never finishes until the client closes the connection. */
+			__send_all(fd, "150 Opening data connection.\r\n");
+			while (!this->stopping && !__wait_readable(fd, 50))
+			{
+			}
+
+			close(data_fd);
+		}
+		else if (cmd == "RETR")
 		{
 			/* Both replies in one write, after the data is sent. */
 			this->get_file(arg, data);
@@ -878,5 +974,315 @@ TEST(ftp_unittest, url_max_connections)
 	EXPECT_EQ(server2.logins.load(), 2);
 	server1.stop();
 	server2.stop();
+}
+
+static int __remove_entry(const char *path, const struct stat *st, int flag,
+						  struct FTW *ftw)
+{
+	return remove(path);
+}
+
+class FtpServerRoot
+{
+public:
+	FtpServerRoot()
+	{
+		char tmpl[] = "/tmp/ftp_unittest.XXXXXX";
+
+		if (mkdtemp(tmpl))
+			this->path = tmpl;
+	}
+
+	~FtpServerRoot()
+	{
+		if (!this->path.empty())
+			nftw(this->path.c_str(), __remove_entry, 16, FTW_DEPTH | FTW_PHYS);
+	}
+
+	void write_file(const std::string& name, const std::string& data)
+	{
+		FILE *fp = fopen((this->path + name).c_str(), "w");
+
+		if (fp)
+		{
+			fwrite(data.data(), 1, data.size(), fp);
+			fclose(fp);
+		}
+	}
+
+	std::string read_file(const std::string& name)
+	{
+		FILE *fp = fopen((this->path + name).c_str(), "r");
+		std::string data;
+		char buf[8192];
+		size_t n;
+
+		if (fp)
+		{
+			while ((n = fread(buf, 1, sizeof buf, fp)) > 0)
+				data.append(buf, n);
+
+			fclose(fp);
+		}
+
+		return data;
+	}
+
+	std::string path;
+};
+
+static bool __auth(const std::string& user, const std::string& password)
+{
+	return user == "user" && password == "pass";
+}
+
+static unsigned short __start_server(WFFtpServer& server)
+{
+	struct sockaddr_in addr;
+	socklen_t len = sizeof addr;
+
+	if (server.start(AF_INET, "127.0.0.1", 0) < 0 ||
+		server.get_listen_addr((struct sockaddr *)&addr, &len) < 0)
+	{
+		return 0;
+	}
+
+	return ntohs(addr.sin_port);
+}
+
+TEST(ftp_unittest, server)
+{
+	FtpServerRoot root;
+	WFFtpServer server(root.path, __auth);
+	unsigned short port = __start_server(server);
+	std::string url = __url(port, "pass");
+	std::string data(2 * 1024 * 1024, 0);
+	WFFtpClient client(100);
+	FtpResult res;
+
+	ASSERT_FALSE(root.path.empty());
+	ASSERT_NE(port, 0);
+	for (size_t i = 0; i < data.size(); i++)
+		data[i] = (char)(i * 7 + 1);
+
+	res = __run(WFFtpTaskFactory::create_put_task(url + "/big", data.data(),
+												  data.size(), nullptr));
+	EXPECT_EQ(res.code, 226);
+	EXPECT_EQ(root.read_file("/big"), data);
+
+	res = __run(WFFtpTaskFactory::create_get_task(url + "/big", nullptr));
+	EXPECT_EQ(res.code, 226);
+	EXPECT_EQ(res.data, data);
+
+	res = __run(WFFtpTaskFactory::create_command_task(url, "MKD", "dir",
+													  nullptr));
+	EXPECT_EQ(res.code, 257);
+	EXPECT_EQ(res.text, "\"/dir\" created.");
+
+	res = __run(WFFtpTaskFactory::create_rename_task(url + "/big",
+													 "/dir/moved", nullptr));
+	EXPECT_EQ(res.code, 250);
+
+	res = __run(WFFtpTaskFactory::create_list_task(url + "/dir", nullptr));
+	EXPECT_EQ(res.code, 226);
+	EXPECT_NE(res.data.find(" moved\r\n"), std::string::npos);
+
+	res = __run(WFFtpTaskFactory::create_command_task(url, "SIZE",
+													  "/dir/moved", nullptr));
+	EXPECT_EQ(res.code, 213);
+	EXPECT_EQ(res.text, std::to_string(data.size()));
+
+	/* Never goes out of root. */
+	root.write_file("/hosts", "in root");
+	res = __run(WFFtpTaskFactory::create_get_task(url + "/..%2F..%2Fhosts",
+												  nullptr));
+	EXPECT_EQ(res.data, "in root");
+
+	res = __run(WFFtpTaskFactory::create_get_task(url + "/missing", nullptr));
+	EXPECT_EQ(res.code, 550);
+
+	res = __run(WFFtpTaskFactory::create_get_task(__url(port, "bad") + "/x",
+												  nullptr));
+	EXPECT_EQ(res.error, WFT_ERR_FTP_LOGIN_FAILED);
+	EXPECT_EQ(res.code, 530);
+
+	ASSERT_EQ(client.init(url), 0);
+	res = __run(client.create_command_task("CWD", "dir", nullptr));
+	EXPECT_EQ(res.code, 250);
+	res = __run(client.create_command_task("PWD", "", nullptr));
+	EXPECT_EQ(res.text, "\"/dir\" is the current directory.");
+	res = __run(client.create_get_task("moved", nullptr));
+	EXPECT_EQ(res.data, data);
+	res = __run(client.create_command_task("RMD", "/dir", nullptr));
+	EXPECT_EQ(res.code, 550);
+	res = __run(client.create_command_task("DELE", "moved", nullptr));
+	EXPECT_EQ(res.code, 250);
+	res = __run(client.create_command_task("CDUP", "", nullptr));
+	EXPECT_EQ(res.code, 250);
+	res = __run(client.create_command_task("RMD", "dir", nullptr));
+	EXPECT_EQ(res.code, 250);
+	server.stop();
+}
+
+TEST(ftp_unittest, server_concurrent)
+{
+	FtpServerRoot root;
+	struct WFFtpDataParams params = FTP_DATA_PARAMS_DEFAULT;
+	WFFacilities::WaitGroup wait_group(16);
+	std::atomic<int> success(0);
+
+	params.max_transfers = 2;
+	WFFtpServer server(&FTP_SERVER_PARAMS_DEFAULT, &params, root.path, __auth);
+	unsigned short port = __start_server(server);
+	std::string url = __url(port, "pass");
+
+	ASSERT_NE(port, 0);
+	root.write_file("/x", std::string(300000, 'x'));
+	for (int i = 0; i < 16; i++)
+	{
+		WFFtpTask *task = WFFtpTaskFactory::create_get_task(url + "/x",
+															nullptr);
+
+		task->set_callback([&](WFFtpTask *task) {
+			if (task->get_resp()->get_reply_code() == 226 &&
+				task->get_resp()->get_data()->size() == 300000)
+			{
+				success++;
+			}
+
+			wait_group.done();
+		});
+		task->start();
+	}
+
+	wait_group.wait();
+	EXPECT_EQ(success.load(), 16);
+	server.stop();
+}
+
+TEST(ftp_unittest, url_shared)
+{
+	MiniFtpServer server;
+	std::string url = __url(server.start(true), "pass");
+	WFFacilities::WaitGroup wait_group(8);
+	std::atomic<int> success(0);
+	std::string file;
+	FtpResult res;
+
+	/* Tasks one after another use the same connection. */
+	server.set_file("/a", "a");
+	for (int i = 0; i < 3; i++)
+	{
+		res = __run(WFFtpTaskFactory::create_get_task(url + "/a", nullptr));
+		EXPECT_EQ(res.data, "a");
+		res = __run(WFFtpTaskFactory::create_command_task(url, "NOOP", "",
+														  nullptr));
+		EXPECT_EQ(res.code, 200);
+	}
+
+	EXPECT_EQ(server.logins.load(), 1);
+
+	/* Other tasks never get in between 'RNFR' and 'RNTO'. */
+	for (int i = 0; i < 4; i++)
+	{
+		std::string name = "/r" + std::to_string(i);
+		WFFtpTask *task;
+
+		server.set_file(name, name);
+		task = WFFtpTaskFactory::create_rename_task(url + name, name + ".new",
+													nullptr);
+		task->set_callback([&](WFFtpTask *task) {
+			if (task->get_resp()->get_reply_code() == 250)
+				success++;
+
+			wait_group.done();
+		});
+		task->start();
+
+		task = WFFtpTaskFactory::create_get_task(url + "/a", nullptr);
+		task->set_callback([&](WFFtpTask *task) {
+			if (*task->get_resp()->get_data() == "a")
+				success++;
+
+			wait_group.done();
+		});
+		task->start();
+	}
+
+	wait_group.wait();
+	EXPECT_EQ(success.load(), 8);
+	EXPECT_TRUE(server.get_file("/r3.new", file));
+	EXPECT_EQ(file, "/r3");
+	server.stop();
+}
+
+TEST(ftp_unittest, transfer_timeout)
+{
+	MiniFtpServer server;
+	std::string url = __url(server.start(true), "pass");
+	auto begin = std::chrono::steady_clock::now();
+	WFFtpTask *task;
+	FtpResult res;
+
+	server.set_file("/hang", "never sent");
+	task = WFFtpTaskFactory::create_get_task(url + "/hang", nullptr);
+	task->set_transfer_timeout(300);
+	res = __run(task);
+	EXPECT_EQ(res.state, WFT_STATE_SYS_ERROR);
+	EXPECT_EQ(res.error, ETIMEDOUT);
+	EXPECT_LT(std::chrono::steady_clock::now() - begin,
+			  std::chrono::seconds(5));
+	server.stop();
+}
+
+static std::string __read_until_closed(int fd)
+{
+	std::string data;
+	char buf[256];
+	ssize_t n;
+
+	while (__wait_readable(fd, 3000) && (n = recv(fd, buf, sizeof buf, 0)) > 0)
+		data.append(buf, n);
+
+	return data;
+}
+
+TEST(ftp_unittest, server_close)
+{
+	FtpServerRoot root;
+	struct WFServerParams params = FTP_SERVER_PARAMS_DEFAULT;
+	struct sockaddr_in addr;
+	int fd;
+
+	/* The first command is waited for 'peer_response_timeout', and then the
+	 * idle time between commands is 'keep_alive_timeout'. */
+	params.peer_response_timeout = 200;
+	params.keep_alive_timeout = 200;
+	WFFtpServer server(&params, &FTP_DATA_PARAMS_DEFAULT, root.path, __auth);
+	unsigned short port = __start_server(server);
+
+	ASSERT_NE(port, 0);
+	memset(&addr, 0, sizeof addr);
+	addr.sin_family = AF_INET;
+	addr.sin_port = htons(port);
+	addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+
+	/* An idle connection is closed with 421. */
+	fd = socket(AF_INET, SOCK_STREAM, 0);
+	ASSERT_EQ(connect(fd, (struct sockaddr *)&addr, sizeof addr), 0);
+	__send_all(fd, "NOOP\r\n");
+	EXPECT_EQ(__read_until_closed(fd), "220 Workflow FTP server ready.\r\n"
+									   "200 NOOP ok.\r\n"
+									   "421 Closing control connection.\r\n");
+	close(fd);
+
+	/* No more reply after the one of 'QUIT'. */
+	fd = socket(AF_INET, SOCK_STREAM, 0);
+	ASSERT_EQ(connect(fd, (struct sockaddr *)&addr, sizeof addr), 0);
+	__send_all(fd, "QUIT\r\n");
+	EXPECT_EQ(__read_until_closed(fd), "220 Workflow FTP server ready.\r\n"
+									   "221 Goodbye.\r\n");
+	close(fd);
+	server.stop();
 }
 

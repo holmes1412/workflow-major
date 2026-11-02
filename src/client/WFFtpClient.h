@@ -52,16 +52,27 @@ public:
 		this->extract = std::move(extract);
 	}
 
+	/* In milliseconds. Limits the waiting for the completion reply after a
+	 * transfer starts, which is as long as the transfer. -1 by default for
+	 * unlimited, and a stalled data connection is still detected by the
+	 * response timeout of each read. */
+	void set_transfer_timeout(int timeout)
+	{
+		this->transfer_timeout = timeout;
+	}
+
 protected:
 	protocol::FtpRequest req;
 	protocol::FtpResponse resp;
 	ftp_callback_t callback;
 	ftp_extract_t extract;
+	int transfer_timeout;
 
 protected:
 	WFFtpTask(ftp_callback_t&& callback) :
 		callback(std::move(callback))
 	{
+		this->transfer_timeout = -1;
 	}
 
 	virtual ~WFFtpTask() { }
@@ -125,8 +136,8 @@ public:
 
 /* Tasks created by url, such as ftp://user:password@host:port/dir/file. As
  * RFC 1738, the path is relative to the login directory, and a path like
- * '/%2Fpub/file' is absolute. Tasks of the same server and user share at
- * most 'max_connections' control connections, each of them runs one task
+ * '/%2Fpub/file' is absolute. Tasks of the same server and user share the
+ * logged in control connections, and at most 'max_connections' of them run
  * at a time. */
 class WFFtpTaskFactory
 {

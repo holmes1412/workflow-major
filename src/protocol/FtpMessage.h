@@ -33,7 +33,8 @@ namespace protocol
 {
 
 /* A command on the control connection. A request with an empty command
- * sends nothing, which is used for receiving the server greeting. */
+ * sends nothing, which is used for receiving the server greeting. As a
+ * server request, it receives one command line. */
 class FtpRequest : public ProtocolMessage
 {
 public:
@@ -54,6 +55,7 @@ public:
 
 protected:
 	virtual int encode(struct iovec vectors[], int max);
+	virtual int append(const void *buf, size_t *size);
 
 protected:
 	std::string command;
@@ -80,6 +82,13 @@ public:
 	int get_reply_code() const { return this->code; }
 	const std::string& get_reply_text() const { return this->text; }
 
+	/* For server. Lines of a multi-line reply are separated by '\n'. */
+	void set_reply(int code, std::string text)
+	{
+		this->code = code;
+		this->text = std::move(text);
+	}
+
 	/* The last preliminary reply, such as '150'. Code is 0 if none. */
 	int get_preliminary_code() const { return this->pre_code; }
 	const std::string& get_preliminary_text() const { return this->pre_text; }
@@ -90,6 +99,7 @@ public:
 	void set_data(std::string data) { this->data = std::move(data); }
 
 protected:
+	virtual int encode(struct iovec vectors[], int max);
 	virtual int append(const void *buf, size_t *size);
 
 private:

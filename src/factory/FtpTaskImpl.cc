@@ -26,6 +26,7 @@
 #include <arpa/inet.h>
 #include <string>
 #include <utility>
+#include "PackageWrapper.h"
 #include "WFTaskError.h"
 #include "WFTaskFactory.h"
 #include "StringUtil.h"
@@ -50,6 +51,12 @@ public:
 		prepare_ = std::move(prepare);
 		start_ = std::move(start);
 		is_transfer_ = true;
+	}
+
+	void set_rename(const std::string& to)
+	{
+		rename_to_ = to;
+		is_rename_ = true;
 	}
 
 protected:
@@ -81,8 +88,36 @@ private:
 		ROUND_NONE,
 		ROUND_GREETING,
 		ROUND_LOGIN,
-		ROUND_PASSIVE,
 		ROUND_USER
+	};
+
+	/* What the reply being received in the user round is for. */
+	enum Phase
+	{
+		PHASE_PASSIVE,
+		PHASE_RNFR,
+		PHASE_FINAL
+	};
+
+	/* Receives the replies of the commands in the user round one by one. */
+	class ReplyWrapper : public PackageWrapper
+	{
+	protected:
+		virtual ProtocolMessage *next_in(ProtocolMessage *message)
+		{
+			return task_->next_reply((FtpResponse *)message);
+		}
+
+	protected:
+		ComplexFtpTask *task_;
+
+	public:
+		ReplyWrapper(ComplexFtpTask *task) : PackageWrapper(NULL)
+		{
+			task_ = task;
+		}
+
+		friend class ComplexFtpTask;
 	};
 
 	FtpConnection *get_ftp_connection() const
@@ -91,44 +126,74 @@ private:
 		return conn ? (FtpConnection *)conn->get_context() : NULL;
 	}
 
-	int parse_passive(const FtpResponse *resp);
+	int parse_passive(const FtpResponse *reply);
+	int send_command(const std::string& command, const std::string& argument);
+	FtpResponse *new_reply();
+	ProtocolMessage *next_reply(FtpResponse *reply);
 
 private:
 	std::string username_;
 	std::string password_;
 	std::string session_;
+	std::string rename_to_;
 	prepare_t prepare_;
 	start_t start_;
 	struct sockaddr_storage data_addr_;
 	socklen_t data_addrlen_;
+	FtpResponse reply_;
+	ReplyWrapper wrapper_;
 	enum Round round_;
+	enum Phase phase_;
 	bool is_transfer_;
-	bool passive_ready_;
+	bool is_rename_;
 	bool epsv_;
-	bool data_started_;
+	bool close_;
 	int state_;
 	int error_;
 
 public:
 	ComplexFtpTask(int retry_max, __ftp_callback_t&& callback) :
-		WFComplexClientTask(retry_max, std::move(callback))
+		WFComplexClientTask(retry_max, std::move(callback)),
+		wrapper_(this)
 	{
 		data_addrlen_ = 0;
 		round_ = ROUND_NONE;
+		phase_ = PHASE_FINAL;
 		is_transfer_ = false;
-		passive_ready_ = false;
+		is_rename_ = false;
 		epsv_ = false;
-		data_started_ = false;
+		close_ = false;
 		state_ = WFT_STATE_SUCCESS;
 		error_ = 0;
 	}
 };
 
+static bool __ftp_line_valid(const std::string& str)
+{
+	static const std::string forbidden("\r\n\0", 3);
+
+	return str.find_first_of(forbidden) == std::string::npos;
+}
+
 bool ComplexFtpTask::check_request()
 {
+	const std::string& cmd = this->req.get_command();
+	const std::string& arg = this->req.get_argument();
+
+	/* Commands sent later in the user round are not encoded by the request,
+	 * so check them here. */
+	if ((is_transfer_ || is_rename_) &&
+		(cmd.empty() || cmd.find(' ') != std::string::npos ||
+		 !__ftp_line_valid(cmd) || !__ftp_line_valid(arg) ||
+		 !__ftp_line_valid(rename_to_)))
+	{
+		this->state = WFT_STATE_SYS_ERROR;
+		this->error = EBADMSG;
+		return false;
+	}
+
 	/* Called again when retrying with a new connection. */
 	round_ = ROUND_NONE;
-	passive_ready_ = false;
 	return true;
 }
 
@@ -137,6 +202,8 @@ CommMessageOut *ComplexFtpTask::message_out()
 	FtpConnection *conn;
 	FtpRequest *req;
 
+	state_ = WFT_STATE_SUCCESS;
+	error_ = 0;
 	if (this->get_seq() == 0)
 	{
 		/* Receive the greeting on a new connection. */
@@ -165,19 +232,36 @@ CommMessageOut *ComplexFtpTask::message_out()
 		return req;
 	}
 
-	if (is_transfer_ && !passive_ready_)
+	/* All the commands of the user round are sent on this connection, so
+	 * no other task can use the connection in between. */
+	round_ = ROUND_USER;
+	close_ = false;
+	if (is_transfer_)
 	{
 		epsv_ = !conn->epsv_disabled;
+		phase_ = PHASE_PASSIVE;
 		req = new FtpRequest;
 		req->set_command(epsv_ ? "EPSV" : "PASV");
-		round_ = ROUND_PASSIVE;
 		return req;
 	}
 
-	/* The user command may be not idempotent. */
-	this->disable_retry();
-	round_ = ROUND_USER;
+	if (is_rename_)
+		phase_ = PHASE_RNFR;
+	else
+	{
+		/* The user command may be not idempotent. */
+		phase_ = PHASE_FINAL;
+		this->disable_retry();
+	}
+
 	return this->WFComplexClientTask::message_out();
+}
+
+FtpResponse *ComplexFtpTask::new_reply()
+{
+	reply_ = FtpResponse();
+	reply_.set_size_limit(this->resp.get_size_limit());
+	return &reply_;
 }
 
 CommMessageIn *ComplexFtpTask::message_in()
@@ -185,16 +269,23 @@ CommMessageIn *ComplexFtpTask::message_in()
 	FtpResponse *resp;
 
 	if (round_ == ROUND_USER)
-		return this->WFComplexClientTask::message_in();
+	{
+		if (phase_ == PHASE_FINAL)
+			wrapper_.set_message(&this->resp);
+		else
+			wrapper_.set_message(this->new_reply());
+
+		return &wrapper_;
+	}
 
 	resp = new FtpResponse;
 	resp->set_size_limit(this->resp.get_size_limit());
 	return resp;
 }
 
-int ComplexFtpTask::parse_passive(const FtpResponse *resp)
+int ComplexFtpTask::parse_passive(const FtpResponse *reply)
 {
-	const char *text = resp->get_reply_text().c_str();
+	const char *text = reply->get_reply_text().c_str();
 	const struct sockaddr *addr;
 	socklen_t addrlen;
 	unsigned long port;
@@ -207,7 +298,7 @@ int ComplexFtpTask::parse_passive(const FtpResponse *resp)
 	{
 		/* 229 Entering Extended Passive Mode (|||port|) */
 		pos = strchr(text, '(');
-		if (resp->get_reply_code() != 229 || !pos || !pos[1] ||
+		if (reply->get_reply_code() != 229 || !pos || !pos[1] ||
 			pos[2] != pos[1] || pos[3] != pos[1])
 		{
 			return -1;
@@ -220,7 +311,7 @@ int ComplexFtpTask::parse_passive(const FtpResponse *resp)
 	else
 	{
 		/* 227 Entering Passive Mode (h1,h2,h3,h4,p1,p2) */
-		if (resp->get_reply_code() != 227)
+		if (reply->get_reply_code() != 227)
 			return -1;
 
 		pos = text;
@@ -257,14 +348,114 @@ int ComplexFtpTask::parse_passive(const FtpResponse *resp)
 	return 0;
 }
 
+int ComplexFtpTask::send_command(const std::string& command,
+								 const std::string& argument)
+{
+	std::string line = command;
+	int ret;
+
+	if (!argument.empty())
+		line.append(" ").append(argument);
+
+	line.append("\r\n");
+	ret = wrapper_.feedback(line.data(), line.size());
+	if (ret == (int)line.size())
+		return 0;
+
+	/* Rarely happens because the line is short and nothing else is being
+	 * sent. The state of the session is unknown then. */
+	state_ = WFT_STATE_SYS_ERROR;
+	error_ = ret < 0 ? errno : EAGAIN;
+	close_ = true;
+	return -1;
+}
+
+/* Called in a network thread when a reply of the user round is received.
+ * Returns the message for the next reply, or NULL if the round finishes. */
+ProtocolMessage *ComplexFtpTask::next_reply(FtpResponse *reply)
+{
+	FtpConnection *conn;
+	int code;
+
+	if (phase_ == PHASE_FINAL)
+		return NULL;
+
+	code = reply->get_reply_code();
+	if (phase_ == PHASE_RNFR)
+	{
+		if (code == 350)
+		{
+			this->disable_retry();
+			if (this->send_command("RNTO", rename_to_) == 0)
+			{
+				phase_ = PHASE_FINAL;
+				return &this->resp;
+			}
+		}
+
+		/* The reply of 'RNFR' is the result if it failed. */
+		this->resp = std::move(*reply);
+		return NULL;
+	}
+
+	if (this->parse_passive(reply) == 0)
+	{
+		/* The transfer command may be not idempotent. */
+		this->disable_retry();
+		if (this->send_command(this->req.get_command(),
+							   this->req.get_argument()) < 0)
+		{
+			return NULL;
+		}
+
+		/* The command is sent before connecting, so the server always gets
+		 * the command first. */
+		prepare_((struct sockaddr *)&data_addr_, data_addrlen_);
+		start_();
+		phase_ = PHASE_FINAL;
+		return &this->resp;
+	}
+
+	conn = this->get_ftp_connection();
+	if (conn && epsv_ && code / 100 == 5)
+	{
+		/* EPSV is not supported. Use PASV instead. */
+		conn->epsv_disabled = true;
+		epsv_ = false;
+		if (this->send_command("PASV", "") == 0)
+			return this->new_reply();
+
+		return NULL;
+	}
+
+	state_ = WFT_STATE_TASK_ERROR;
+	error_ = WFT_ERR_FTP_PASSIVE_FAILED;
+	this->resp = std::move(*reply);
+	return NULL;
+}
+
 int ComplexFtpTask::keep_alive_timeout()
 {
-	auto *resp = (FtpResponse *)this->get_message_in();
-	int code = resp->get_reply_code();
 	FtpConnection *conn;
+	FtpResponse *resp;
+	int code;
 
-	state_ = WFT_STATE_SUCCESS;
-	error_ = 0;
+	if (round_ == ROUND_USER)
+	{
+		/* Without a preliminary reply, the server will not use the data
+		 * connection. Close the control connection to make the server
+		 * release the passive port, so the data connection terminates. */
+		if (close_ || (is_transfer_ && phase_ == PHASE_FINAL &&
+					   this->resp.get_preliminary_code() == 0))
+		{
+			return 0;
+		}
+
+		return this->keep_alive_timeo;
+	}
+
+	resp = (FtpResponse *)this->get_message_in();
+	code = resp->get_reply_code();
 	switch (round_)
 	{
 	case ROUND_GREETING:
@@ -308,34 +499,6 @@ int ComplexFtpTask::keep_alive_timeout()
 
 		break;
 
-	case ROUND_PASSIVE:
-		if (this->parse_passive(resp) == 0)
-		{
-			passive_ready_ = true;
-			return FTP_KEEPALIVE_DEFAULT;
-		}
-
-		conn = this->get_ftp_connection();
-		if (epsv_ && code / 100 == 5)
-		{
-			/* EPSV is not supported. Use PASV instead. */
-			conn->epsv_disabled = true;
-			return FTP_KEEPALIVE_DEFAULT;
-		}
-
-		state_ = WFT_STATE_TASK_ERROR;
-		error_ = WFT_ERR_FTP_PASSIVE_FAILED;
-		return FTP_KEEPALIVE_DEFAULT;
-
-	case ROUND_USER:
-		/* Without a preliminary reply, the server will not use the data
-		 * connection. Close the control connection to make the server
-		 * release the passive port, so the data connection terminates. */
-		if (is_transfer_ && resp->get_preliminary_code() == 0)
-			return 0;
-
-		return this->keep_alive_timeo;
-
 	default:
 		return 0;
 	}
@@ -349,22 +512,13 @@ int ComplexFtpTask::first_timeout()
 	if (round_ != ROUND_USER)
 		return 0;
 
-	if (!this->get_message_in())
-	{
-		/* The command is sent. Starting the data connection after this
-		 * makes sure that the server always gets the command first. */
-		if (is_transfer_ && !data_started_)
-		{
-			data_started_ = true;
-			start_();
-		}
+	/* After the preliminary reply of a transfer, the completion reply comes
+	 * when the data connection is finished. Wait for it as long as the
+	 * receive timeout, which is unlimited by default. */
+	if (is_transfer_ && this->resp.get_preliminary_code() != 0)
+		return this->receive_timeo > 0 ? this->receive_timeo : -1;
 
-		return this->watch_timeo;
-	}
-
-	/* A preliminary reply is received. For a transfer command, the
-	 * completion reply comes after the data connection is finished. */
-	return is_transfer_ ? -1 : 0;
+	return this->watch_timeo;
 }
 
 bool ComplexFtpTask::init_success()
@@ -417,21 +571,28 @@ bool ComplexFtpTask::finish_once()
 	FtpResponse *resp;
 
 	if (round_ == ROUND_USER)
-		return true;
-
-	resp = (FtpResponse *)this->get_message_in();
-	if (this->state == WFT_STATE_SUCCESS)
 	{
-		if (state_ != WFT_STATE_SUCCESS)
+		if (this->state == WFT_STATE_SUCCESS && state_ != WFT_STATE_SUCCESS)
 		{
-			/* Return the negative reply to the user. */
 			this->state = state_;
 			this->error = error_;
-			this->resp = std::move(*resp);
-			this->disable_retry();
 		}
-		else if (round_ == ROUND_PASSIVE && passive_ready_ && prepare_)
-			prepare_((struct sockaddr *)&data_addr_, data_addrlen_);
+
+		/* 'EPSV' or 'PASV' of a transfer. */
+		if (is_transfer_)
+			delete this->get_message_out();
+
+		return true;
+	}
+
+	resp = (FtpResponse *)this->get_message_in();
+	if (this->state == WFT_STATE_SUCCESS && state_ != WFT_STATE_SUCCESS)
+	{
+		/* Return the negative reply to the user. */
+		this->state = state_;
+		this->error = error_;
+		this->resp = std::move(*resp);
+		this->disable_retry();
 	}
 
 	delete this->get_message_out();
@@ -530,6 +691,21 @@ __WFFtpTask *__WFFtpTaskFactory::create_ftp_task(const ParsedURI& uri,
 	return task;
 }
 
+__WFFtpTask *__WFFtpTaskFactory::create_rename_task(const ParsedURI& uri,
+													const std::string& session,
+													int retry_max,
+													const std::string& to,
+													__ftp_callback_t callback)
+{
+	auto *task = new ComplexFtpTask(retry_max, std::move(callback));
+
+	task->set_session(session);
+	task->set_rename(to);
+	task->init(uri);
+	task->set_keep_alive(FTP_KEEPALIVE_DEFAULT);
+	return task;
+}
+
 __WFFtpTask *
 __WFFtpTaskFactory::create_transfer_task(const ParsedURI& uri,
 										 const std::string& session,
@@ -562,4 +738,3 @@ __WFFtpTaskFactory::create_data_task(const struct sockaddr *addr,
 	task->init(TT_TCP, addr, addrlen, "");
 	return task;
 }
-

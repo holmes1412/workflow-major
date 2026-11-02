@@ -237,16 +237,19 @@ cc_library(
 		'src/factory/FtpTaskImpl.inl',
 		'src/protocol/FtpMessage.h',
 		'src/client/WFFtpClient.h',
+		'src/server/WFFtpServer.h',
 	],
 	includes = [
 		'src/client',
 		'src/factory',
 		'src/protocol',
+		'src/server',
 	],
 	srcs = [
 		'src/factory/FtpTaskImpl.cc',
 		'src/protocol/FtpMessage.cc',
 		'src/client/WFFtpClient.cc',
+		'src/server/WFFtpServer.cc',
 	],
 	deps = [
 		':common',
@@ -424,5 +427,11 @@ cc_binary(
 cc_binary(
 	name = 'ftp_cli',
 	srcs = ['tutorial/tutorial-21-ftp_cli.cc'],
+	deps = [':ftp'],
+)
+
+cc_binary(
+	name = 'ftp_server',
+	srcs = ['tutorial/tutorial-22-ftp_server.cc'],
 	deps = [':ftp'],
 )

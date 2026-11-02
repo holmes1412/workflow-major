@@ -23,7 +23,6 @@
 #include <string>
 #include <unordered_map>
 #include <utility>
-#include <vector>
 #include <functional>
 #include "URIParser.h"
 #include "StringUtil.h"
@@ -37,19 +36,16 @@
 #define FTP_RETRY_MAX			1
 #define FTP_MAX_CONNECTIONS		4
 
-/* A dedicated control connection, identified by the session id. */
-struct __WFFtpSession
-{
-	std::string id;
-};
-
-/* A server and user with its sessions. A task takes a session from the pool,
- * so that only one task runs on a control connection at a time. */
+/* A server and user. A task takes a token from the pool before running, so
+ * at most 'max' tasks of the server run at a time. Tasks of a WFFtpClient
+ * run on the dedicated connection of 'session', and the others share the
+ * connections of the server and user. */
 class __WFFtpServer
 {
 public:
 	ParsedURI uri;
-	WFResourcePool *pool;
+	std::string session;
+	WFResourcePool pool;
 
 public:
 	void incref() { this->ref++; }
@@ -61,30 +57,18 @@ public:
 	}
 
 private:
-	__WFFtpSession *sessions;
 	std::atomic<int> ref;
 
 public:
-	__WFFtpServer(const std::string& id, size_t n) : ref(1)
+	__WFFtpServer(const std::string& session, size_t max) :
+		session(session),
+		pool(max),
+		ref(1)
 	{
-		std::vector<void *> res(n);
-
-		this->sessions = new __WFFtpSession[n];
-		for (size_t i = 0; i < n; i++)
-		{
-			this->sessions[i].id = id + ":" + std::to_string(i);
-			res[i] = &this->sessions[i];
-		}
-
-		this->pool = new WFResourcePool(res.data(), n);
 	}
 
 private:
-	~__WFFtpServer()
-	{
-		delete this->pool;
-		delete []this->sessions;
-	}
+	~__WFFtpServer() { }
 };
 
 /* Servers of the tasks created by url. */
@@ -104,13 +88,11 @@ private:
 	std::mutex mutex;
 	std::unordered_map<std::string, __WFFtpServer *> servers;
 	size_t max_connections;
-	unsigned long long count;
 
 public:
 	__WFFtpServerMap()
 	{
 		this->max_connections = FTP_MAX_CONNECTIONS;
-		this->count = 0;
 	}
 
 	~__WFFtpServerMap()
@@ -137,8 +119,7 @@ __WFFtpServer *__WFFtpServerMap::get(const ParsedURI& uri)
 		server = it->second;
 	else
 	{
-		server = new __WFFtpServer("url" + std::to_string(this->count++),
-								   this->max_connections);
+		server = new __WFFtpServer("", this->max_connections);
 		server->uri = uri;
 		this->servers.emplace(std::move(key), server);
 	}
@@ -162,7 +143,7 @@ enum FtpOperation
 enum FtpStep
 {
 	FTP_STEP_BEGIN,
-	FTP_STEP_SESSION,
+	FTP_STEP_RUN,
 	FTP_STEP_CONTROL,
 	FTP_STEP_DATA,
 	FTP_STEP_FINISH,
@@ -200,11 +181,9 @@ public:
 			server->incref();
 
 		this->server = server;
-		this->session = NULL;
-		this->res = NULL;
 		this->op = op;
 		this->step = FTP_STEP_BEGIN;
-		this->rename_sent = false;
+		this->locked = false;
 		this->data_task = NULL;
 		this->data_series = NULL;
 		this->data_cond = NULL;
@@ -239,8 +218,7 @@ protected:
 private:
 	bool check_request();
 	bool is_transfer() const;
-	__WFFtpTask *create_control_task(const std::string& command,
-									 const std::string& argument);
+	__WFFtpTask *create_control_task();
 	void control_callback(__WFFtpTask *task);
 	void prepare_data(const struct sockaddr *addr, socklen_t addrlen);
 	void start_data();
@@ -249,11 +227,9 @@ private:
 
 private:
 	__WFFtpServer *server;
-	__WFFtpSession *session;
-	void *res;
 	enum FtpOperation op;
 	enum FtpStep step;
-	bool rename_sent;
+	bool locked;
 	__WFFtpDataTask *data_task;
 	SeriesWork *data_series;
 	WFConditional *data_cond;
@@ -308,11 +284,12 @@ bool FtpClientTask::check_request()
 	return allowed;
 }
 
-__WFFtpTask *FtpClientTask::create_control_task(const std::string& command,
-												const std::string& argument)
+__WFFtpTask *FtpClientTask::create_control_task()
 {
 	auto&& cb = std::bind(&FtpClientTask::control_callback, this,
 						  std::placeholders::_1);
+	const ParsedURI& uri = this->server->uri;
+	const std::string& session = this->server->session;
 	__WFFtpTask *task;
 
 	if (this->is_transfer())
@@ -322,22 +299,29 @@ __WFFtpTask *FtpClientTask::create_control_task(const std::string& command,
 								   std::placeholders::_2);
 		auto&& start = std::bind(&FtpClientTask::start_data, this);
 
-		task = __WFFtpTaskFactory::create_transfer_task(this->server->uri,
-														this->session->id,
+		task = __WFFtpTaskFactory::create_transfer_task(uri, session,
 														FTP_RETRY_MAX,
 														std::move(prepare),
 														std::move(start),
 														std::move(cb));
+		task->set_receive_timeout(this->transfer_timeout);
+	}
+	else if (this->op == FTP_OP_RENAME)
+	{
+		task = __WFFtpTaskFactory::create_rename_task(uri, session,
+													  FTP_RETRY_MAX,
+													  this->rename_to,
+													  std::move(cb));
 	}
 	else
 	{
-		task = __WFFtpTaskFactory::create_ftp_task(this->server->uri,
-												   this->session->id,
+		task = __WFFtpTaskFactory::create_ftp_task(uri, session,
 												   FTP_RETRY_MAX,
 												   std::move(cb));
 	}
 
-	task->get_req()->set_command(command, argument);
+	task->get_req()->set_command(this->req.get_command(),
+								 this->req.get_argument());
 	task->get_resp()->set_size_limit(this->resp.get_size_limit());
 	if (this->op == FTP_OP_QUIT)
 		task->set_keep_alive(0);
@@ -355,6 +339,7 @@ void FtpClientTask::control_callback(__WFFtpTask *task)
 	this->resp.set_size_limit(size_limit);
 }
 
+/* Called in a network thread right after the transfer command is sent. */
 void FtpClientTask::prepare_data(const struct sockaddr *addr,
 								 socklen_t addrlen)
 {
@@ -362,15 +347,6 @@ void FtpClientTask::prepare_data(const struct sockaddr *addr,
 						  std::placeholders::_1);
 	std::function<void (const void *, size_t)> extract;
 	bool upload = (this->op == FTP_OP_STOR);
-
-	if (this->data_series)
-	{
-		/* Prepared again by a retry. Take back the data to upload. */
-		if (upload)
-			this->upload = std::move(*this->data_task->get_req()->get_data());
-
-		this->data_series->dismiss();
-	}
 
 	if (!upload && this->extract)
 	{
@@ -412,10 +388,10 @@ void FtpClientTask::data_callback(__WFFtpDataTask *task)
 
 void FtpClientTask::finish()
 {
-	if (this->session)
+	if (this->locked)
 	{
-		this->server->pool->post(this->session);
-		this->session = NULL;
+		this->server->pool.post(NULL);
+		this->locked = false;
 	}
 
 	if (this->data_started && this->state == WFT_STATE_SUCCESS)
@@ -445,11 +421,11 @@ void FtpClientTask::dispatch()
 	case FTP_STEP_BEGIN:
 		if (this->check_request())
 		{
-			/* Wait for a free session of the server. */
+			/* Wait until fewer than 'max' tasks of the server are running. */
 			task = WFTaskFactory::create_empty_task();
-			this->step = FTP_STEP_SESSION;
+			this->step = FTP_STEP_RUN;
 			series->push_front(this);
-			series->push_front(this->server->pool->get(task, &this->res));
+			series->push_front(this->server->pool.get(task));
 		}
 		else
 		{
@@ -461,26 +437,14 @@ void FtpClientTask::dispatch()
 
 		break;
 
-	case FTP_STEP_SESSION:
-		this->session = (__WFFtpSession *)this->res;
+	case FTP_STEP_RUN:
+		this->locked = true;
 		this->step = FTP_STEP_CONTROL;
 		series->push_front(this);
-		series->push_front(this->create_control_task(this->req.get_command(),
-													 this->req.get_argument()));
+		series->push_front(this->create_control_task());
 		break;
 
 	case FTP_STEP_CONTROL:
-		if (this->op == FTP_OP_RENAME && !this->rename_sent &&
-			this->state == WFT_STATE_SUCCESS &&
-			this->resp.get_reply_code() == 350)
-		{
-			this->rename_sent = true;
-			series->push_front(this);
-			series->push_front(this->create_control_task("RNTO",
-														 this->rename_to));
-			break;
-		}
-
 		if (this->data_started)
 		{
 			this->step = FTP_STEP_DATA;
@@ -721,4 +685,3 @@ void WFFtpTaskFactory::set_max_connections(size_t max)
 {
 	__ftp_server_map.set_max_connections(max);
 }
-

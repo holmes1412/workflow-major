@@ -45,6 +45,7 @@ set(TUTORIAL_LIST
 	tutorial-17-dns_cli
 	tutorial-19-dns_server
 	tutorial-21-ftp_cli
+	tutorial-22-ftp_server
 )
 
 if (APPLE)

@@ -3,6 +3,7 @@ project(server)
 
 set(SRC
 	WFServer.cc
+	WFFtpServer.cc
 )
 
 if (NOT MYSQL STREQUAL "n")

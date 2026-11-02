@@ -17,9 +17,14 @@
 */
 
 #include <errno.h>
+#include <ctype.h>
 #include <string.h>
 #include <string>
 #include "FtpMessage.h"
+
+/* Lines of commands and replies are short, so a much longer one is from a
+ * broken or malicious peer. */
+#define FTP_LINE_MAX	(64 * 1024)
 
 namespace protocol
 {
@@ -47,6 +52,81 @@ int FtpRequest::encode(struct iovec vectors[], int max)
 	}
 
 	this->line.append("\r\n");
+	vectors[0].iov_base = (char *)this->line.data();
+	vectors[0].iov_len = this->line.size();
+	return 1;
+}
+
+int FtpRequest::append(const void *buf, size_t *size)
+{
+	const char *p = (const char *)buf;
+	const char *eol = (const char *)memchr(p, '\n', *size);
+	size_t len = eol ? eol + 1 - p : *size;
+	size_t pos;
+
+	if (len > this->size_limit - this->line.size() ||
+		len > FTP_LINE_MAX - this->line.size())
+	{
+		errno = EMSGSIZE;
+		return -1;
+	}
+
+	if (!eol)
+	{
+		this->line.append(p, len);
+		return 0;
+	}
+
+	this->line.append(p, eol - p);
+	if (!this->line.empty() && this->line.back() == '\r')
+		this->line.pop_back();
+
+	pos = this->line.find(' ');
+	this->command = this->line.substr(0, pos);
+	if (pos != std::string::npos)
+		this->argument = this->line.substr(pos + 1);
+	else
+		this->argument.clear();
+
+	this->line.clear();
+	*size = len;
+	return 1;
+}
+
+int FtpResponse::encode(struct iovec vectors[], int max)
+{
+	static const std::string forbidden("\r\0", 2);
+	std::string code;
+	size_t pos = 0;
+	size_t eol;
+
+	if (this->code == 0)
+		return 0;
+
+	if (this->code < 100 || this->code > 599 ||
+		this->text.find_first_of(forbidden) != std::string::npos)
+	{
+		errno = EBADMSG;
+		return -1;
+	}
+
+	code = std::to_string(this->code);
+	this->line.clear();
+	while ((eol = this->text.find('\n', pos)) != std::string::npos)
+	{
+		if (pos == 0)
+			this->line += code + "-";
+		else if (pos < eol && isdigit((unsigned char)this->text[pos]))
+			this->line += " ";	/* Not to be taken as the last line. */
+
+		this->line.append(this->text, pos, eol - pos);
+		this->line += "\r\n";
+		pos = eol + 1;
+	}
+
+	this->line += code + " ";
+	this->line.append(this->text, pos, std::string::npos);
+	this->line += "\r\n";
 	vectors[0].iov_base = (char *)this->line.data();
 	vectors[0].iov_len = this->line.size();
 	return 1;
@@ -127,7 +207,8 @@ int FtpResponse::append(const void *buf, size_t *size)
 	{
 		eol = (const char *)memchr(p, '\n', end - p);
 		len = (eol ? eol + 1 : end) - p;
-		if (len > this->size_limit - this->size_received)
+		if (len > this->size_limit - this->size_received ||
+			len > FTP_LINE_MAX - this->line.size())
 		{
 			errno = EMSGSIZE;
 			return -1;
