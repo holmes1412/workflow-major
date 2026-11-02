@@ -169,6 +169,10 @@ __WFGlobal::__WFGlobal()
 	static_scheme_port_["KAFKAs"] = "9093";
 	static_scheme_port_["KAFKAS"] = "9093";
 
+	static_scheme_port_["ftp"] = "21";
+	static_scheme_port_["Ftp"] = "21";
+	static_scheme_port_["FTP"] = "21";
+
 	sync_count_ = 0;
 	sync_max_ = 0;
 }
@@ -882,6 +886,21 @@ static inline const char *__get_task_error_string(int error)
 
 	case WFT_ERR_CONSUL_CHECK_RESPONSE_FAILED:
 		return "Consul check response failed";
+
+	case WFT_ERR_FTP_SERVICE_UNAVAILABLE:
+		return "FTP service unavailable";
+
+	case WFT_ERR_FTP_LOGIN_FAILED:
+		return "FTP login failed";
+
+	case WFT_ERR_FTP_TYPE_FAILED:
+		return "FTP binary type rejected";
+
+	case WFT_ERR_FTP_PASSIVE_FAILED:
+		return "FTP passive mode failed";
+
+	case WFT_ERR_FTP_COMMAND_DISALLOWED:
+		return "FTP command disallowed";
 
 	default:
 		break;

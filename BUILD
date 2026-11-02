@@ -232,6 +232,29 @@ cc_library(
 )
 
 cc_library(
+	name = 'ftp',
+	hdrs = [
+		'src/factory/FtpTaskImpl.inl',
+		'src/protocol/FtpMessage.h',
+		'src/client/WFFtpClient.h',
+	],
+	includes = [
+		'src/client',
+		'src/factory',
+		'src/protocol',
+	],
+	srcs = [
+		'src/factory/FtpTaskImpl.cc',
+		'src/protocol/FtpMessage.cc',
+		'src/client/WFFtpClient.cc',
+	],
+	deps = [
+		':common',
+	],
+	visibility = ["//visibility:public"],
+)
+
+cc_library(
 	name = 'consul',
 	hdrs = [
 		'src/client/WFConsulClient.h',
@@ -396,4 +419,10 @@ cc_binary(
 	name = 'dns_server',
 	srcs = ['tutorial/tutorial-19-dns_server.cc'],
 	deps = [':common'],
+)
+
+cc_binary(
+	name = 'ftp_cli',
+	srcs = ['tutorial/tutorial-21-ftp_cli.cc'],
+	deps = [':ftp'],
 )

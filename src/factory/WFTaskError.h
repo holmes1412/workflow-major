@@ -70,6 +70,13 @@ enum
 	//CONSUL
 	WFT_ERR_CONSUL_API_UNKNOWN = 6001,		///< api type not supported
 	WFT_ERR_CONSUL_CHECK_RESPONSE_FAILED = 6002,	///< Consul http code failed
+
+	//FTP
+	WFT_ERR_FTP_SERVICE_UNAVAILABLE = 7001,		///< FTP, server greeting is not a completion reply
+	WFT_ERR_FTP_LOGIN_FAILED = 7002,			///< FTP, USER/PASS rejected
+	WFT_ERR_FTP_TYPE_FAILED = 7003,				///< FTP, binary transfer type 'TYPE I' rejected
+	WFT_ERR_FTP_PASSIVE_FAILED = 7004,			///< FTP, EPSV/PASV rejected or invalid reply
+	WFT_ERR_FTP_COMMAND_DISALLOWED = 7005,		///< FTP, command managed by client, such as USER/PASV/RETR
 };
 
 #endif

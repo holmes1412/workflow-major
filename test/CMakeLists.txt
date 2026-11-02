@@ -46,6 +46,7 @@ set(TEST_LIST
 	dns_unittest
 	resource_unittest
 	uriparser_unittest
+	ftp_unittest
 )
 
 if (APPLE)

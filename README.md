@@ -133,6 +133,7 @@ If you want to use xmake to build workflow, you can see [xmake build document](d
 * Built-in clients
   * [Asynchronous MySQL client：mysql\_cli](docs/en/tutorial-12-mysql_cli.md)
   * [Asynchronous Kafka client: kafka\_cli](docs/en/tutorial-13-kafka_cli.md)
+  * [Asynchronous FTP client: ftp\_cli](docs/tutorial-21-ftp_cli.md)
 
 #### Programming Paradigm
 

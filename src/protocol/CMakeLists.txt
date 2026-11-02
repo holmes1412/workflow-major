@@ -11,6 +11,7 @@ set(SRC
 	HttpMessage.cc
 	HttpUtil.cc
 	TLVMessage.cc
+	FtpMessage.cc
 )
 
 if (NOT MYSQL STREQUAL "n")

@@ -10,6 +10,7 @@ set(SRC
 	WFResourcePool.cc
 	WFMessageQueue.cc
 	FileTaskImpl.cc
+	FtpTaskImpl.cc
 )
 
 if (NOT MYSQL STREQUAL "n")

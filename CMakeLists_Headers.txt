@@ -54,6 +54,7 @@ set(INCLUDE_HEADERS
 	src/protocol/DnsMessage.h
 	src/protocol/DnsUtil.h
 	src/protocol/TLVMessage.h
+	src/protocol/FtpMessage.h
 	src/protocol/ConsulDataTypes.h
 	src/server/WFServer.h
 	src/server/WFDnsServer.h
@@ -63,6 +64,7 @@ set(INCLUDE_HEADERS
 	src/client/WFHttpChunkedClient.h
 	src/client/WFMySQLConnection.h
 	src/client/WFRedisSubscriber.h
+	src/client/WFFtpClient.h
 	src/client/WFConsulClient.h
 	src/client/WFDnsClient.h
 	src/manager/DnsCache.h
@@ -93,6 +95,7 @@ set(INCLUDE_HEADERS
 	src/factory/WFMessageQueue.h
 	src/factory/HttpTaskImpl.inl
 	src/factory/RedisTaskImpl.inl
+	src/factory/FtpTaskImpl.inl
 	src/nameservice/WFNameService.h
 	src/nameservice/WFDnsResolver.h
 	src/nameservice/WFServiceGovernance.h
