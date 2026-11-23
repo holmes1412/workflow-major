@@ -55,6 +55,7 @@ public:
 	{
 		is_user_request_ = true;
 		is_redirect_ = false;
+		user_request_sent_ = false;
 		ctx_ = 0;
 	}
 
@@ -130,6 +131,7 @@ private:
 
 	bool is_user_request_;
 	bool is_redirect_;
+	bool user_request_sent_;
 	std::string user_info_;
 };
 
@@ -271,6 +273,8 @@ CommMessageOut *__ComplexKafkaTask::message_out()
 	}
 
 	this->get_req()->set_correlation_id(seqid);
+	/* M22: The user request is handed to the connection. */
+	user_request_sent_ = true;
 	return this->WFComplexClientTask::message_out();
 }
 
@@ -649,7 +653,10 @@ bool __ComplexKafkaTask::has_next()
 
 bool __ComplexKafkaTask::finish_once()
 {
+	bool user_request_sent = user_request_sent_;
 	bool finish = true;
+
+	user_request_sent_ = false;
 	if (this->state == WFT_STATE_SUCCESS)
 		finish = !has_next();
 
@@ -681,8 +688,25 @@ bool __ComplexKafkaTask::finish_once()
 	}
 	else
 	{
-		this->get_resp()->set_api_type(this->get_req()->get_api_type());
-		this->get_resp()->set_api_version(this->get_req()->get_api_version());
+		KafkaRequest *req = this->get_req();
+
+		this->get_resp()->set_api_type(req->get_api_type());
+		this->get_resp()->set_api_version(req->get_api_version());
+
+		/* M22: Re-encode on retry, and rewind the records only if sent. */
+		req->clear_buf();
+		if (user_request_sent && req->get_api_type() == Kafka_Produce)
+		{
+			KafkaTopparList *toppar_list = req->get_toppar_list();
+			KafkaToppar *toppar;
+
+			toppar_list->rewind();
+			while ((toppar = toppar_list->get_next()) != NULL)
+			{
+				if (toppar->get_record_startpos()->next != toppar->get_record())
+					toppar->restore_record_curpos();
+			}
+		}
 	}
 
 	is_user_request_ = true;

@@ -18,6 +18,7 @@
 
 #include <string>
 #include <atomic>
+#include <openssl/rand.h>
 #include "dns_types.h"
 #include "DnsMessage.h"
 #include "WFTaskError.h"
@@ -68,7 +69,19 @@ CommMessageOut *ComplexDnsTask::message_out()
 	enum TransportType type = this->get_transport_type();
 
 	if (req->get_id() == 0)
-		req->set_id(++ComplexDnsTask::seq * 99991 % 65535 + 1);
+	{
+		unsigned short id = 0;
+
+		/* M10: Must not be predictable by an off-path attacker (RFC 5452). */
+		while (id == 0)
+		{
+			if (RAND_bytes((unsigned char *)&id, sizeof id) != 1)
+				id = ++ComplexDnsTask::seq * 99991 % 65535 + 1;
+		}
+
+		req->set_id(id);
+	}
+
 	resp->set_request_id(req->get_id());
 	resp->set_request_name(req->get_question_name());
 	req->set_single_packet(type == TT_UDP);

@@ -28,6 +28,7 @@
 # undef SLIST_HEAD
 #endif
 #include <errno.h>
+#include <fcntl.h>
 #include <limits.h>
 #include <unistd.h>
 #include <time.h>
@@ -36,6 +37,7 @@
 #include <pthread.h>
 #include <openssl/ssl.h>
 #include <openssl/bio.h>
+#include <openssl/err.h>
 #include "list.h"
 #include "rbtree.h"
 #include "poller.h"
@@ -85,6 +87,7 @@ struct __poller
 	struct rb_node *tree_last;
 	struct list_head timeo_list;
 	struct list_head no_timeo_list;
+	struct list_head pipe_list;
 	struct __poller_node **nodes;
 	pthread_mutex_t mutex;
 	char buf[POLLER_BUFSIZE];
@@ -94,7 +97,8 @@ struct __poller
 
 static inline int __poller_create_pfd()
 {
-	return epoll_create(1);
+	/* M12: Close on exec. */
+	return epoll_create1(EPOLL_CLOEXEC);
 }
 
 static inline int __poller_close_pfd(int fd)
@@ -134,7 +138,8 @@ static inline int __poller_mod_fd(int fd, int old_event,
 
 static inline int __poller_create_timerfd()
 {
-	return timerfd_create(CLOCK_MONOTONIC, 0);
+	/* M12: Close on exec. */
+	return timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC);
 }
 
 static inline int __poller_close_timerfd(int fd)
@@ -654,6 +659,8 @@ static void __poller_handle_listen(struct __poller_node *node,
 				break;
 		}
 
+		/* M12: Close on exec. */
+		fcntl(sockfd, F_SETFD, FD_CLOEXEC);
 		result = node->data.accept(addr, addrlen, sockfd, node->data.context);
 		if (!result)
 			break;
@@ -733,8 +740,9 @@ static void __poller_handle_recvfrom(struct __poller_node *node,
 
 		result = node->data.recvfrom(addr, addrlen, poller->buf, n,
 									 node->data.context);
+		/* M5: Drop this datagram but keep the listener. */
 		if (!result)
-			break;
+			continue;
 
 		res->data = node->data;
 		res->data.result = result;
@@ -763,9 +771,12 @@ static void __poller_handle_recvfrom(struct __poller_node *node,
 static void __poller_handle_ssl_accept(struct __poller_node *node,
 									   poller_t *poller)
 {
-	int ret = SSL_accept(node->data.ssl->ssl);
 	int error;
+	int ret;
 
+	/* M4: Drop errors left by other connections. */
+	ERR_clear_error();
+	ret = SSL_accept(node->data.ssl->ssl);
 	if (ret <= 0)
 	{
 		error = SSL_get_error(node->data.ssl->ssl, ret);
@@ -793,9 +804,12 @@ static void __poller_handle_ssl_accept(struct __poller_node *node,
 static void __poller_handle_ssl_connect(struct __poller_node *node,
 										poller_t *poller)
 {
-	int ret = SSL_connect(node->data.ssl->ssl);
 	int error;
+	int ret;
 
+	/* M4: Drop errors left by other connections. */
+	ERR_clear_error();
+	ret = SSL_connect(node->data.ssl->ssl);
 	if (ret <= 0)
 	{
 		error = SSL_get_error(node->data.ssl->ssl, ret);
@@ -823,9 +837,12 @@ static void __poller_handle_ssl_connect(struct __poller_node *node,
 static void __poller_handle_ssl_shutdown(struct __poller_node *node,
 										 poller_t *poller)
 {
-	int ret = SSL_shutdown(node->data.ssl->ssl);
 	int error;
+	int ret;
 
+	/* M4: Drop errors left by other connections. */
+	ERR_clear_error();
+	ret = SSL_shutdown(node->data.ssl->ssl);
 	if (ret <= 0)
 	{
 		error = SSL_get_error(node->data.ssl->ssl, ret);
@@ -972,21 +989,30 @@ static void __poller_handle_notify(struct __poller_node *node,
 
 static int __poller_handle_pipe(poller_t *poller)
 {
-	struct __poller_node **node = (struct __poller_node **)poller->buf;
+	void **token = (void **)poller->buf;
+	struct __poller_node *node;
+	struct list_head *pos, *tmp;
+	LIST_HEAD(pipe_list);
 	int stop = 0;
-	int n;
-	int i;
+	ssize_t n;
+	ssize_t i;
 
-	n = read(poller->pipe_rd, node, POLLER_BUFSIZE) / sizeof (void *);
+	n = read(poller->pipe_rd, token, POLLER_BUFSIZE) / (ssize_t)sizeof (void *);
 	for (i = 0; i < n; i++)
 	{
-		if (node[i])
-		{
-			free(node[i]->res);
-			poller->callback((struct poller_result *)node[i], poller->context);
-		}
-		else
+		if (!token[i])
 			stop = 1;
+	}
+
+	/* L4: The pipe only wakes us up. Nodes are on pipe_list. */
+	pthread_mutex_lock(&poller->mutex);
+	list_splice_init(&poller->pipe_list, &pipe_list);
+	pthread_mutex_unlock(&poller->mutex);
+	list_for_each_safe(pos, tmp, &pipe_list)
+	{
+		node = list_entry(pos, struct __poller_node, list);
+		free(node->res);
+		poller->callback((struct poller_result *)node, poller->context);
 	}
 
 	return stop;
@@ -1163,7 +1189,12 @@ static int __poller_open_pipe(poller_t *poller)
 
 	if (pipe(pipefd) >= 0)
 	{
-		if (__poller_add_fd(pipefd[0], EPOLLIN, &node, poller) >= 0)
+		/* L4: Never block on the pipe. M12: Close on exec. */
+		if (fcntl(pipefd[0], F_SETFL, O_NONBLOCK) >= 0 &&
+			fcntl(pipefd[1], F_SETFL, O_NONBLOCK) >= 0 &&
+			fcntl(pipefd[0], F_SETFD, FD_CLOEXEC) >= 0 &&
+			fcntl(pipefd[1], F_SETFD, FD_CLOEXEC) >= 0 &&
+			__poller_add_fd(pipefd[0], EPOLLIN, &node, poller) >= 0)
 		{
 			poller->pipe_rd = pipefd[0];
 			poller->pipe_wr = pipefd[1];
@@ -1221,6 +1252,7 @@ poller_t *__poller_create(void **nodes_buf, const struct poller_params *params)
 				poller->tree_last = NULL;
 				INIT_LIST_HEAD(&poller->timeo_list);
 				INIT_LIST_HEAD(&poller->no_timeo_list);
+				INIT_LIST_HEAD(&poller->pipe_list);
 
 				poller->stopped = 1;
 				return poller;
@@ -1423,6 +1455,18 @@ int poller_add(const struct poller_data *data, int timeout, poller_t *poller)
 	return -1;
 }
 
+/* L4: Called with poller->mutex held. Must never block: the poller thread
+ * takes the same mutex before it can drain the pipe. */
+static void __poller_pipe_result(struct __poller_node *node, poller_t *poller)
+{
+	void *token = &poller->pipe_list;
+
+	if (list_empty(&poller->pipe_list))
+		write(poller->pipe_wr, &token, sizeof (void *));
+
+	list_add_tail(&node->list, &poller->pipe_list);
+}
+
 int poller_del(int fd, poller_t *poller)
 {
 	struct __poller_node *node;
@@ -1453,7 +1497,7 @@ int poller_del(int fd, poller_t *poller)
 		if (!stopped)
 		{
 			node->removed = 1;
-			write(poller->pipe_wr, &node, sizeof (void *));
+			__poller_pipe_result(node, poller);
 		}
 	}
 	else
@@ -1496,7 +1540,7 @@ int poller_mod(const struct poller_data *data, int timeout, poller_t *poller)
 			if (!stopped)
 			{
 				orig->removed = 1;
-				write(poller->pipe_wr, &orig, sizeof (void *));
+				__poller_pipe_result(orig, poller);
 			}
 
 			if (timeout >= 0)
@@ -1615,6 +1659,7 @@ int poller_add_timer(const struct timespec *value, void *context, void **timer,
 int poller_del_timer(void *timer, poller_t *poller)
 {
 	struct __poller_node *node = (struct __poller_node *)timer;
+	int stopped = 0;
 
 	pthread_mutex_lock(&poller->mutex);
 	if (!node->removed)
@@ -1628,6 +1673,10 @@ int poller_del_timer(void *timer, poller_t *poller)
 
 		node->error = 0;
 		node->state = PR_ST_DELETED;
+		/* H10: Not in the caller's thread. msgqueue_put() may block. */
+		stopped = poller->stopped;
+		if (!stopped)
+			__poller_pipe_result(node, poller);
 	}
 	else
 	{
@@ -1636,7 +1685,7 @@ int poller_del_timer(void *timer, poller_t *poller)
 	}
 
 	pthread_mutex_unlock(&poller->mutex);
-	if (node)
+	if (stopped)
 		poller->callback((struct poller_result *)node, poller->context);
 
 	return -!node;
@@ -1737,6 +1786,8 @@ int poller_ssl_read(void *buf, int num, int *error, poller_ssl_t *ssl)
 	int ret;
 
 	pthread_mutex_lock(&ssl->mutex);
+	/* M4: Drop errors left by other connections. */
+	ERR_clear_error();
 	ret = SSL_read(ssl->ssl, buf, num);
 	if (ret <= 0)
 		*error = SSL_get_error(ssl->ssl, ret);
@@ -1750,6 +1801,8 @@ int poller_ssl_write(const void *buf, int num, int *error, poller_ssl_t *ssl)
 	int ret;
 
 	pthread_mutex_lock(&ssl->mutex);
+	/* M4: Drop errors left by other connections. */
+	ERR_clear_error();
 	ret = SSL_write(ssl->ssl, buf, num);
 	if (ret <= 0)
 		*error = SSL_get_error(ssl->ssl, ret);

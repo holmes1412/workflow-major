@@ -150,6 +150,18 @@ bool ComplexMySQLTask::check_request()
 	return false;
 }
 
+/* H11: Let peer verification (if enabled) check the host name or IP. */
+static int __ssl_set_peer_name(SSL *ssl, const char *name)
+{
+	if (!name || name[0] == '\0' || name[0] == '/')
+		return 0;
+
+	if (X509_VERIFY_PARAM_set1_ip_asc(SSL_get0_param(ssl), name) > 0)
+		return 0;
+
+	return SSL_set1_host(ssl, name) > 0 ? 0 : -1;
+}
+
 static SSL *__create_ssl(SSL_CTX *ssl_ctx)
 {
 	BIO *wbio;
@@ -357,6 +369,14 @@ int ComplexMySQLTask::check_handshake(MySQLHandshakeResponse *resp)
 			{
 				state_ = WFT_STATE_SYS_ERROR;
 				error_ = errno;
+				return 0;
+			}
+
+			if (__ssl_set_peer_name(ssl, uri_.host) < 0)
+			{
+				SSL_free(ssl);
+				state_ = WFT_STATE_SYS_ERROR;
+				error_ = ENOMEM;
 				return 0;
 			}
 

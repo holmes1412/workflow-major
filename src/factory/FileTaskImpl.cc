@@ -160,7 +160,8 @@ public:
 protected:
 	virtual int prepare()
 	{
-		this->args.fd = open(this->pathname.c_str(), O_RDONLY);
+		/* M12: Close on exec. */
+		this->args.fd = open(this->pathname.c_str(), O_RDONLY | O_CLOEXEC);
 		if (this->args.fd < 0)
 			return -1;
 
@@ -195,7 +196,8 @@ public:
 protected:
 	virtual int prepare()
 	{
-		this->args.fd = open(this->pathname.c_str(), O_WRONLY | O_CREAT, 0644);
+		/* M12: Close on exec. */
+		this->args.fd = open(this->pathname.c_str(), O_WRONLY | O_CREAT | O_CLOEXEC, 0644);
 		if (this->args.fd < 0)
 			return -1;
 
@@ -231,7 +233,8 @@ public:
 protected:
 	virtual int prepare()
 	{
-		this->args.fd = open(this->pathname.c_str(), O_RDONLY);
+		/* M12: Close on exec. */
+		this->args.fd = open(this->pathname.c_str(), O_RDONLY | O_CLOEXEC);
 		if (this->args.fd < 0)
 			return -1;
 
@@ -267,7 +270,8 @@ public:
 protected:
 	virtual int prepare()
 	{
-		this->args.fd = open(this->pathname.c_str(), O_WRONLY | O_CREAT, 0644);
+		/* M12: Close on exec. */
+		this->args.fd = open(this->pathname.c_str(), O_WRONLY | O_CREAT | O_CLOEXEC, 0644);
 		if (this->args.fd < 0)
 			return -1;
 

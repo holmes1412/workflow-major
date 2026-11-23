@@ -78,7 +78,34 @@ private:
 #endif
 };
 
-using RouteTargetTCP_SSL = RouteTargetTCP;
+/* H11: Let peer verification (if enabled) check the host name or IP. */
+static int __ssl_set_peer_name(SSL *ssl, const char *name)
+{
+	if (!name || name[0] == '\0' || name[0] == '/')
+		return 0;
+
+	if (X509_VERIFY_PARAM_set1_ip_asc(SSL_get0_param(ssl), name) > 0)
+		return 0;
+
+	return SSL_set1_host(ssl, name) > 0 ? 0 : -1;
+}
+
+class RouteTargetTCP_SSL : public RouteTargetTCP
+{
+protected:
+	virtual int init_ssl(SSL *ssl)
+	{
+		return __ssl_set_peer_name(ssl, this->hostname.c_str());
+	}
+
+protected:
+	std::string hostname;
+
+public:
+	RouteTargetTCP_SSL(const std::string& name) : hostname(name)
+	{
+	}
+};
 
 /* To support TLS SNI. */
 class RouteTargetTCP_TLS_SNI : public RouteTargetTCP_SSL
@@ -87,38 +114,50 @@ private:
 	virtual int init_ssl(SSL *ssl)
 	{
 		if (SSL_set_tlsext_host_name(ssl, this->hostname.c_str()) > 0)
-			return 0;
+			return this->RouteTargetTCP_SSL::init_ssl(ssl);
 		else
 			return -1;
 	}
 
-private:
-	std::string hostname;
-
 public:
-	RouteTargetTCP_TLS_SNI(const std::string& name) : hostname(name)
+	RouteTargetTCP_TLS_SNI(const std::string& name) :
+		RouteTargetTCP_SSL(name)
 	{
 	}
 };
 
-using RouteTargetSCTP_SSL = RouteTargetSCTP;
+class RouteTargetSCTP_SSL : public RouteTargetSCTP
+{
+protected:
+	virtual int init_ssl(SSL *ssl)
+	{
+		return __ssl_set_peer_name(ssl, this->hostname.c_str());
+	}
 
+protected:
+	std::string hostname;
+
+public:
+	RouteTargetSCTP_SSL(const std::string& name) : hostname(name)
+	{
+	}
+};
+
+/* To support TLS SNI. */
 class RouteTargetSCTP_TLS_SNI : public RouteTargetSCTP_SSL
 {
 private:
 	virtual int init_ssl(SSL *ssl)
 	{
 		if (SSL_set_tlsext_host_name(ssl, this->hostname.c_str()) > 0)
-			return 0;
+			return this->RouteTargetSCTP_SSL::init_ssl(ssl);
 		else
 			return -1;
 	}
 
-private:
-	std::string hostname;
-
 public:
-	RouteTargetSCTP_TLS_SNI(const std::string& name) : hostname(name)
+	RouteTargetSCTP_TLS_SNI(const std::string& name) :
+		RouteTargetSCTP_SSL(name)
 	{
 	}
 };
@@ -205,13 +244,13 @@ RouteResultEntry::create_target(const struct RouteParams *params,
 		if (params->use_tls_sni)
 			target = new RouteTargetTCP_TLS_SNI(params->hostname);
 		else
-			target = new RouteTargetTCP_SSL;
+			target = new RouteTargetTCP_SSL(params->hostname);
 		break;
 	case TT_SCTP_SSL:
 		if (params->use_tls_sni)
 			target = new RouteTargetSCTP_TLS_SNI(params->hostname);
 		else
-			target = new RouteTargetSCTP_SSL;
+			target = new RouteTargetSCTP_SSL(params->hostname);
 		break;
 	default:
 		errno = EINVAL;
@@ -452,11 +491,10 @@ static uint64_t __generate_key(enum TransportType type,
 	{
 		buf.append((const char *)&ssl_ctx, sizeof (void *));
 		buf.append((const char *)&ep_params->ssl_connect_timeout, sizeof (int));
-		if (ep_params->use_tls_sni)
-		{
-			buf += hostname;
-			buf += '\n';
-		}
+		/* H11: Every TLS target checks its name, so the name is in the key. */
+		buf += ep_params->use_tls_sni ? '1' : '0';
+		buf += hostname;
+		buf += '\n';
 	}
 
 	if (addrinfo->ai_next)

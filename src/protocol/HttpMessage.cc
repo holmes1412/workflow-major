@@ -388,7 +388,10 @@ int HttpResponse::append(const void *buf, size_t *size)
 
 	if (ret > 0)
 	{
-		if (strcmp(http_parser_get_code(this->parser), "100") == 0)
+		const char *code = http_parser_get_code(this->parser);
+
+		/* M9: Skip every interim response except 101. */
+		if (code[0] == '1' && strcmp(code, "101") != 0)
 		{
 			http_parser_deinit(this->parser);
 			http_parser_init(1, this->parser);
@@ -460,9 +463,47 @@ int HttpMessageChunk::encode(struct iovec vectors[], int max)
 
 #define MIN(x, y)	((x) <= (y) ? (x) : (y))
 
+/* L2: chunk-size = 1*HEXDIG, followed by nothing but chunk extensions. */
+static bool __parse_chunk_size(const char *p, size_t *size)
+{
+	const char *start = p;
+	size_t n = 0;
+	int digit;
+
+	while (1)
+	{
+		if (*p >= '0' && *p <= '9')
+			digit = *p - '0';
+		else if (*p >= 'a' && *p <= 'f')
+			digit = *p - 'a' + 10;
+		else if (*p >= 'A' && *p <= 'F')
+			digit = *p - 'A' + 10;
+		else
+			break;
+
+		if (n > ((size_t)-1 - digit) / 16)
+			n = (size_t)-1;
+		else
+			n = n * 16 + digit;
+
+		p++;
+	}
+
+	if (p == start)
+		return false;
+
+	while (*p == ' ' || *p == '\t')
+		p++;
+
+	if (*p != '\0' && *p != ';')
+		return false;
+
+	*size = n;
+	return true;
+}
+
 int HttpMessageChunk::append_chunk_line(const void *buf, size_t size)
 {
-	char *end;
 	size_t i;
 
 	size = MIN(size, sizeof this->chunk_line - this->nreceived);
@@ -478,8 +519,7 @@ int HttpMessageChunk::append_chunk_line(const void *buf, size_t size)
 			}
 
 			this->chunk_line[i] = '\0';
-			this->chunk_size = strtoul(this->chunk_line, &end, 16);
-			if (end == this->chunk_line)
+			if (!__parse_chunk_size(this->chunk_line, &this->chunk_size))
 			{
 				errno = EBADMSG;
 				return -1;
@@ -498,6 +538,14 @@ int HttpMessageChunk::append_chunk_line(const void *buf, size_t size)
 
 			this->nreceived = i + 2;
 			return 1;
+		}
+
+		/* L2: No control characters other than HTAB. */
+		if ((signed char)this->chunk_line[i] < ' ' &&
+			this->chunk_line[i] != '\t')
+		{
+			errno = EBADMSG;
+			return -1;
 		}
 	}
 
@@ -542,12 +590,21 @@ int HttpMessageChunk::append(const void *buf, size_t *size)
 		this->nreceived += n;
 		if (this->nreceived == this->chunk_size + 2)
 		{
+			/* L2: The chunk data must end with CRLF. */
+			if (((char *)this->chunk_data)[this->chunk_size] != '\r' ||
+				((char *)this->chunk_data)[this->chunk_size + 1] != '\n')
+			{
+				errno = EBADMSG;
+				return -1;
+			}
+
 			((char *)this->chunk_data)[this->nreceived] = '\0';
 			return 1;
 		}
 	}
 	else
 	{
+		/* L2: No control characters other than HTAB in trailer lines. */
 		while (n < *size)
 		{
 			char c = ((const char *)buf)[n];
@@ -556,6 +613,8 @@ int HttpMessageChunk::append(const void *buf, size_t *size)
 			{
 				if (c == '\r')
 					this->nreceived = 1;
+				else if ((signed char)c < ' ' && c != '\t')
+					break;
 				else
 					this->nreceived = (size_t)-2;
 			}
@@ -577,6 +636,8 @@ int HttpMessageChunk::append(const void *buf, size_t *size)
 			{
 				if (c == '\r')
 					this->nreceived = (size_t)-1;
+				else if ((signed char)c < ' ' && c != '\t')
+					break;
 			}
 			else /* if (this->nreceived == (size_t)-1) */
 			{

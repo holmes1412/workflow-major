@@ -354,14 +354,17 @@ static int compress_buf(KafkaBlock *block, int compress_type, void *env)
 
 			if (c_stream->avail_out == 0)
 			{
+				/* O6: Keep the output already in nblock. */
+				size_t used = nblock.get_len();
+
 				bound_size = compressBound(c_stream->avail_in);
-				if (!nblock.allocate(bound_size))
+				if (!nblock.reallocate(used + bound_size))
 				{
 					delete c_stream;
 					return -1;
 				}
 
-				c_stream->next_out = (Bytef *)nblock.get_block();
+				c_stream->next_out = (Bytef *)nblock.get_block() + used;
 				c_stream->avail_out = bound_size;
 			}
 
@@ -633,7 +636,14 @@ static int snappy_decompress(void *buf, size_t n, KafkaBlock *block)
 
 		size_t nn = block->get_len();
 
-		return snappy_uncompress(inbuf, n, (char *)block->get_block(), &nn);
+		/* M3: snappy_uncompress() returns a positive error code. */
+		if (snappy_uncompress(inbuf, n, (char *)block->get_block(), &nn) != SNAPPY_OK)
+		{
+			errno = EBADMSG;
+			return -1;
+		}
+
+		return 0;
 	}
 }
 
@@ -726,7 +736,8 @@ static int lz4_decompress(void *buf, size_t n, KafkaBlock *block)
 	}
 
 
-	if (in_off < inlen)
+	/* M3: Reject a frame without its end mark. */
+	if (in_off < inlen || r != 0)
 	{
 		code = LZ4F_freeDecompressionContext(dctx);
 		errno = EBADMSG;
@@ -734,6 +745,8 @@ static int lz4_decompress(void *buf, size_t n, KafkaBlock *block)
 	}
 
 	LZ4F_freeDecompressionContext(dctx);
+	/* M3: The decompressed size, not the allocated one. */
+	block->set_len(out_off);
 	return 0;
 }
 
@@ -766,7 +779,11 @@ static int zstd_decompress(void *buf, size_t n, KafkaBlock *block)
 							  buf, n);
 
 		if (!ZSTD_isError(ret))
+		{
+			/* M3: The decompressed size, not the allocated one. */
+			block->set_len(ret);
 			return 0;
+		}
 
 		if (ZSTD_getErrorCode(ret) == ZSTD_error_dstSize_tooSmall)
 		{
@@ -1130,20 +1147,19 @@ static int parse_varint_u64(void **buf, size_t *size, uint64_t *val)
 	size_t off = 0;
 	uint64_t num = 0;
 	int shift = 0;
-	size_t org_size = *size;
 
 	do
 	{
-		if (*size == 0)
+		/* H4: Bound every byte, and at most 10 of them. */
+		if (off == *size || shift > 63)
 		{
-			*size = org_size;
 			errno = EBADMSG;
-			return -1; /* Underflow */
+			return -1;
 		}
 
-		num |= (uint64_t)(((char *)(*buf))[(int)off] & 0x7f) << shift;
+		num |= (uint64_t)(((char *)(*buf))[off] & 0x7f) << shift;
 		shift += 7;
-	} while (((char *)(*buf))[(int)off++] & 0x80);
+	} while (((char *)(*buf))[off++] & 0x80);
 
 	*val = num;
 	*buf = (char *)(*buf) + off;
@@ -1161,111 +1177,123 @@ int KafkaMessage::parse_message_set(void **buf, size_t *size,
 	int32_t message_size;
 	int32_t crc;
 
-	if (parse_i64(buf, size, &offset) < 0)
-		return -1;
-
-	if (parse_i32(buf, size, &message_size) < 0)
-		return -1;
-
-	if (*size < (size_t)(message_size - 8))
-		return 1;
-
-	if (parse_i32(buf, size, &crc) < 0)
-		return -1;
-
-	if (check_crcs)
+	/* L13: Loop over the messages instead of recursing. */
+	do
 	{
-		int32_t crc_32 = crc32(0, NULL, 0);
-		crc_32 = crc32(crc_32, (Bytef *)*buf, message_size - 4);
-		if (crc_32 != crc)
-		{
-			errno = EBADMSG;
+		if (parse_i64(buf, size, &offset) < 0)
 			return -1;
-		}
-	}
 
-	int8_t magic;
-	int8_t attributes;
+		if (parse_i32(buf, size, &message_size) < 0)
+			return -1;
 
-	if (parse_i8(buf, size, &magic) < 0)
-		return -1;
+		/* L12: An incomplete message. message_size covers the CRC. */
+		if (message_size < 4 || *size < (size_t)message_size)
+			return 1;
 
-	if (parse_i8(buf, size, &attributes) < 0)
-		return -1;
+		if (parse_i32(buf, size, &crc) < 0)
+			return -1;
 
-	int64_t timestamp = -1;
-	if (msg_vers == 1 && parse_i64(buf, size, &timestamp) < 0)
-		return -1;
-
-	void *key;
-	size_t key_len;
-	if (parse_bytes(buf, size, &key, &key_len) < 0)
-		return -1;
-
-	void *payload;
-	size_t payload_len;
-
-	if (parse_bytes(buf, size, &payload, &payload_len) < 0)
-		return -1;
-
-	if (offset >= toppar->get_offset())
-	{
-		int compress_type = attributes & 3;
-		if (compress_type == 0)
+		if (check_crcs)
 		{
-			KafkaRecord *kafka_record = new KafkaRecord;
-			kafka_record_t *record = kafka_record->get_raw_ptr();
-			record->key = key;
-			record->key_len = key_len;
-			record->timestamp = timestamp;
-			record->offset = offset;
-			record->toppar = toppar->get_raw_ptr();
-			record->key_is_moved = 1;
-			record->value_is_moved = 1;
-			record->value = payload;
-			record->value_len = payload_len;
-			list_add_tail(kafka_record->get_list(), record_list);
-		}
-		else
-		{
-			KafkaBlock block;
-			if (uncompress_buf(payload, payload_len, &block, compress_type) < 0)
-				return -1;
-
-			struct list_head *record_head = record_list->prev;
-			void *uncompressed_ptr = block.get_block();
-			size_t uncompressed_len = block.get_len();
-			parse_message_set(&uncompressed_ptr, &uncompressed_len, check_crcs,
-							msg_vers, record_list, uncompressed, toppar);
-
-			uncompressed->add_item(std::move(block));
-
-			if (msg_vers == 1)
+			int32_t crc_32 = crc32(0, NULL, 0);
+			crc_32 = crc32(crc_32, (Bytef *)*buf, message_size - 4);
+			if (crc_32 != crc)
 			{
-				struct list_head *pos;
-				KafkaRecord *record;
-				int n = 0;
+				errno = EBADMSG;
+				return -1;
+			}
+		}
 
-				for (pos = record_head->next; pos != record_list; pos = pos->next)
-					n++;
+		int8_t magic;
+		int8_t attributes;
 
-				for (pos = record_head->next; pos != record_list; pos = pos->next)
+		if (parse_i8(buf, size, &magic) < 0)
+			return -1;
+
+		if (parse_i8(buf, size, &attributes) < 0)
+			return -1;
+
+		int64_t timestamp = -1;
+		if (msg_vers == 1 && parse_i64(buf, size, &timestamp) < 0)
+			return -1;
+
+		void *key;
+		size_t key_len;
+		if (parse_bytes(buf, size, &key, &key_len) < 0)
+			return -1;
+
+		void *payload;
+		size_t payload_len;
+
+		if (parse_bytes(buf, size, &payload, &payload_len) < 0)
+			return -1;
+
+		if (offset >= toppar->get_offset())
+		{
+			int compress_type = attributes & 3;
+			if (compress_type == 0)
+			{
+				KafkaRecord *kafka_record = new KafkaRecord;
+				kafka_record_t *record = kafka_record->get_raw_ptr();
+				record->key = key;
+				record->key_len = key_len;
+				record->timestamp = timestamp;
+				record->offset = offset;
+				record->toppar = toppar->get_raw_ptr();
+				record->key_is_moved = 1;
+				record->value_is_moved = 1;
+				record->value = payload;
+				record->value_len = payload_len;
+				list_add_tail(kafka_record->get_list(), record_list);
+			}
+			else
+			{
+				KafkaBlock block;
+
+				/* M26: The inner set of a compressed message is parsed with
+				 * uncompressed == NULL. Kafka does not allow compressed
+				 * messages in it, and nesting them multiplies memory. */
+				if (!uncompressed)
 				{
-					int64_t fix_offset;
+					errno = EBADMSG;
+					return -1;
+				}
 
-					record = list_entry(pos, KafkaRecord, list);
-					fix_offset = offset + record->get_offset() - n + 1;
-					record->set_offset(fix_offset);
+				if (uncompress_buf(payload, payload_len, &block, compress_type) < 0)
+					return -1;
+
+				struct list_head *record_head = record_list->prev;
+				void *uncompressed_ptr = block.get_block();
+				size_t uncompressed_len = block.get_len();
+
+				/* M26: Inner records point into the block. Keep it first. */
+				uncompressed->add_item(std::move(block));
+				if (parse_message_set(&uncompressed_ptr, &uncompressed_len,
+									  check_crcs, msg_vers, record_list,
+									  NULL, toppar) < 0)
+					return -1;
+
+				if (msg_vers == 1)
+				{
+					struct list_head *pos;
+					KafkaRecord *record;
+					int n = 0;
+
+					for (pos = record_head->next; pos != record_list; pos = pos->next)
+						n++;
+
+					for (pos = record_head->next; pos != record_list; pos = pos->next)
+					{
+						int64_t fix_offset;
+
+						record = list_entry(pos, KafkaRecord, list);
+						fix_offset = offset + record->get_offset() - n + 1;
+						record->set_offset(fix_offset);
+					}
 				}
 			}
 		}
-	}
-
-	if (*size > 0)
-	{
-		return parse_message_set(buf, size, check_crcs, msg_vers,
-								 record_list, uncompressed, toppar);
-	}
+	} while (*size > 0);
 
 	return 0;
 }
@@ -1405,9 +1433,16 @@ int KafkaMessage::parse_record_batch(void **buf, size_t *size,
 	if (parse_i32(buf, size, &hdr.crc) < 0)
 		return -1;
 
+	/* H6: Check the length before the CRC uses it. */
+	if (hdr.length < 49)
+	{
+		errno = EBADMSG;
+		return -1;
+	}
+
 	if (check_crcs)
 	{
-		if (hdr.length > (int)*size + 9)
+		if ((size_t)(hdr.length - 9) > *size)
 		{
 			errno = EBADMSG;
 			return -1;
@@ -1444,35 +1479,28 @@ int KafkaMessage::parse_record_batch(void **buf, size_t *size,
 	if (parse_i32(buf, size, &hdr.record_count) < 0)
 		return -1;
 
-	if (hdr.length < 49)
-	{
-		errno = EBADMSG;
-		return -1;
-	}
-
 	size_t record_body_size = (size_t)(hdr.length - 49);
 	if (*size < record_body_size)
 		return 1;
 
-	KafkaBlock block;
 	int compress_type = hdr.attributes & 7;
+	void *p = *buf;
+	size_t n = *size;
 
 	if (compress_type != 0)
 	{
+		KafkaBlock block;
+
 		if (uncompress_buf(*buf, record_body_size, &block, compress_type) < 0)
 			return -1;
 
 		*buf = (char *)*buf + record_body_size;
 		*size -= record_body_size;
-	}
-
-	void *p = *buf;
-	size_t n = *size;
-
-	if (block.get_len() > 0)
-	{
 		p = block.get_block();
 		n = block.get_len();
+		/* L14: The records point into the block: keep it with the response
+		 * even if one of them turns out to be bad. */
+		uncompressed->add_item(std::move(block));
 	}
 
 	for (int i = 0; i < hdr.record_count; ++i)
@@ -1504,9 +1532,6 @@ int KafkaMessage::parse_record_batch(void **buf, size_t *size,
 		*size = n;
 	}
 
-	if (block.get_len() > 0)
-		uncompressed->add_item(std::move(block));
-
 	return 0;
 }
 
@@ -1524,6 +1549,13 @@ int KafkaMessage::parse_records(void **buf, size_t *size, bool check_crcs,
 
 	if (msg_set_size < 0)
 		return -1;
+
+	/* H13: The record set must fit in the response. */
+	if ((size_t)msg_set_size > *size)
+	{
+		errno = EBADMSG;
+		return -1;
+	}
 
 	if (*size < 17)
 		return -1;
@@ -2917,7 +2949,9 @@ static int kafka_meta_parse_partition(void **buf, size_t *size,
 		if (parse_i32(buf, size, &leader_id) < 0)
 			break;
 
-		if (!kafka_broker_get_leader(leader_id, broker_list, &partition[i]->leader))
+		/* M21: No leader for now. Keep the partition with its error. */
+		if (leader_id >= 0 &&
+			!kafka_broker_get_leader(leader_id, broker_list, &partition[i]->leader))
 			break;
 
 		if (parse_i32(buf, size, &replica_cnt) < 0)

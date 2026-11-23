@@ -63,12 +63,16 @@ struct CommConnEntry
 	pthread_mutex_t mutex;
 };
 
-static inline int __set_fd_nonblock(int fd)
+static inline int __set_fd_flags(int fd)
 {
 	int flags = fcntl(fd, F_GETFL);
 
 	if (flags >= 0)
 		flags = fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+
+	/* M12: Also close on exec. */
+	if (flags >= 0)
+		flags = fcntl(fd, F_SETFD, FD_CLOEXEC);
 
 	return flags;
 }
@@ -781,8 +785,9 @@ void Communicator::handle_incoming_reply(struct poller_result *res)
 			break;
 		}
 
-		pthread_mutex_unlock(&target->mutex);
+		/* C5: The entry may be freed once target->mutex is unlocked. */
 		pthread_mutex_unlock(mutex);
+		pthread_mutex_unlock(&target->mutex);
 		break;
 	}
 
@@ -953,7 +958,7 @@ struct CommConnEntry *Communicator::accept_conn(CommServiceTarget *target,
 	struct CommConnEntry *entry;
 	size_t size;
 
-	if (__set_fd_nonblock(target->sockfd) >= 0)
+	if (__set_fd_flags(target->sockfd) >= 0)
 	{
 		size = offsetof(struct CommConnEntry, mutex);
 		entry = (struct CommConnEntry *)malloc(size);
@@ -1688,7 +1693,7 @@ int Communicator::nonblock_connect(CommTarget *target)
 
 	if (sockfd >= 0)
 	{
-		if (__set_fd_nonblock(sockfd) >= 0)
+		if (__set_fd_flags(sockfd) >= 0)
 		{
 			if (connect(sockfd, target->addr, target->addrlen) >= 0 ||
 				errno == EINPROGRESS)
@@ -1862,7 +1867,7 @@ int Communicator::nonblock_listen(CommService *service)
 
 	if (sockfd >= 0)
 	{
-		if (__set_fd_nonblock(sockfd) >= 0)
+		if (__set_fd_flags(sockfd) >= 0)
 		{
 			if (__bind_sockaddr(sockfd, service->bind_addr,
 								service->addrlen) >= 0)
@@ -2158,7 +2163,7 @@ int Communicator::io_bind(IOService *service)
 	event_fd = service->create_event_fd();
 	if (event_fd >= 0)
 	{
-		if (__set_fd_nonblock(event_fd) >= 0)
+		if (__set_fd_flags(event_fd) >= 0)
 		{
 			service->ref = 1;
 			data.operation = PD_OP_EVENT;
@@ -2211,7 +2216,9 @@ int Communicator::io_bind(IOService *service)
 
 	if (service->create_pipe_fd(pipe_fd) >= 0)
 	{
-		if (__set_fd_nonblock(pipe_fd[0]) >= 0)
+		/* M12: Close the write end on exec too. */
+		if (__set_fd_flags(pipe_fd[0]) >= 0 &&
+			fcntl(pipe_fd[1], F_SETFD, FD_CLOEXEC) >= 0)
 		{
 			service->ref = 1;
 			data.operation = PD_OP_NOTIFY;

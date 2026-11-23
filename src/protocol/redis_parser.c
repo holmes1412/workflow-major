@@ -29,6 +29,7 @@
 #define REDIS_MSGBUF_INIT_SIZE		8
 #define REDIS_REPLY_DEPTH_LIMIT		64
 #define REDIS_ARRAY_SIZE_LIMIT		(4 * 1024 * 1024)
+#define REDIS_ARRAY_INIT_SIZE		8
 
 enum
 {
@@ -41,10 +42,14 @@ enum
 	REDIS_PARSE_END
 };
 
+/* H7: An unfinished array. Its elements are allocated as they arrive. */
 struct __redis_read_record
 {
 	struct list_head list;
 	redis_reply_t *reply;
+	size_t size;
+	size_t capacity;
+	int depth;		/* H8: depth of its elements */
 };
 
 void redis_reply_deinit(redis_reply_t *reply)
@@ -143,6 +148,38 @@ static int __redis_parse_lf(char ch, redis_parser_t *parser)
 	return 1;
 }
 
+/* H7: Allocate the next element. The vector grows up to the size. */
+static int __redis_parse_element(struct __redis_read_record *node,
+								 redis_parser_t *parser)
+{
+	redis_reply_t *array = node->reply;
+	redis_reply_t **element = array->element;
+	redis_reply_t *reply;
+	size_t capacity;
+
+	if (array->elements == node->capacity)
+	{
+		capacity = MAX(REDIS_ARRAY_INIT_SIZE, 2 * node->capacity);
+		capacity = MIN(capacity, node->size);
+		element = (redis_reply_t **)realloc(element, capacity * sizeof (void *));
+		if (!element)
+			return -1;
+
+		array->element = element;
+		node->capacity = capacity;
+	}
+
+	reply = (redis_reply_t *)malloc(sizeof (redis_reply_t));
+	if (!reply)
+		return -1;
+
+	redis_reply_init(reply);
+	element[array->elements++] = reply;
+	parser->cur = reply;
+	parser->status = REDIS_GET_TYPE;
+	return 0;
+}
+
 static int __redis_parse_line(redis_parser_t *parser)
 {
 	char *str = parser->msgbuf + parser->msgidx;
@@ -151,7 +188,7 @@ static int __redis_parse_line(redis_parser_t *parser)
 	struct __redis_read_record *node;
 	char data[32];
 	size_t n;
-	size_t i;
+	int depth;
 
 	parser->msgidx = parser->findidx + 2;
 	switch (parser->type)
@@ -213,27 +250,38 @@ static int __redis_parse_line(redis_parser_t *parser)
 		if (n > REDIS_ARRAY_SIZE_LIMIT)
 			return -2;
 
-		parser->nleft += n;
-		if (redis_reply_set_array(n, parser->cur) < 0)
-			return -1;
-
 		if (n == 0)
-			return 1;
-
-		parser->nleft--;
-		for (i = 0; i < n - 1; i++)
 		{
-			node = (struct __redis_read_record *)malloc(sizeof *node);
-			if (!node)
+			if (redis_reply_set_array(0, parser->cur) < 0)
 				return -1;
 
-			node->reply = parser->cur->element[n - 1 - i];
-			list_add(&node->list, &parser->read_list);
+			return 1;
 		}
 
-		parser->cur = parser->cur->element[0];
-		parser->status = REDIS_GET_TYPE;
-		return 0;
+		/* H8: Check the depth before going into the array. */
+		depth = 1;
+		if (!list_empty(&parser->read_list))
+		{
+			node = list_entry(parser->read_list.next,
+							  struct __redis_read_record, list);
+			depth = node->depth + 1;
+		}
+
+		if (depth >= REDIS_REPLY_DEPTH_LIMIT)
+			return -2;
+
+		/* H7: One record per array, not per element. */
+		node = (struct __redis_read_record *)malloc(sizeof *node);
+		if (!node)
+			return -1;
+
+		parser->cur->type = REDIS_REPLY_TYPE_ARRAY;
+		node->reply = parser->cur;
+		node->size = n;
+		node->capacity = 0;
+		node->depth = depth;
+		list_add(&node->list, &parser->read_list);
+		return __redis_parse_element(node, parser);
 
 	}
 
@@ -305,7 +353,6 @@ void redis_parser_init(redis_parser_t *parser)
 	parser->msgsize = 0;
 	parser->bufsize = 0;
 	parser->status = REDIS_GET_TYPE;
-	parser->nleft = 1;
 	parser->cur = &parser->reply;
 	INIT_LIST_HEAD(&parser->read_list);
 	parser->msgidx = 0;
@@ -359,6 +406,27 @@ static int __redis_parse_done(redis_reply_t *reply, char *buf, int depth)
 	}
 
 	return 1;
+}
+
+/* H7: Go on with the innermost unfinished array, or finish the message. */
+static int __redis_parse_next(redis_parser_t *parser)
+{
+	struct __redis_read_record *node;
+
+	while (!list_empty(&parser->read_list))
+	{
+		node = list_entry(parser->read_list.next,
+						  struct __redis_read_record, list);
+		if (node->reply->elements < node->size)
+			return __redis_parse_element(node, parser);
+
+		list_del(&node->list);
+		free(node);
+	}
+
+	parser->parse_succ = 1;
+	parser->status = REDIS_PARSE_END;
+	return 0;
 }
 
 static int __redis_split_inline_command(redis_parser_t *parser)
@@ -477,25 +545,8 @@ int redis_parser_append_message(const void *buf, size_t *size,
 
 		if (ret == 1)
 		{
-			struct list_head *lnext = parser->read_list.next;
-			struct __redis_read_record *next;
-
-			parser->nleft--;
-			if (lnext && lnext != &parser->read_list)
-			{
-				next = list_entry(lnext, struct __redis_read_record, list);
-				parser->cur = next->reply;
-				list_del(lnext);
-				free(next);
-			}
-
-			if (parser->nleft > 0)
-				parser->status = REDIS_GET_TYPE;
-			else
-			{
-				parser->parse_succ = 1;
-				parser->status = REDIS_PARSE_END;
-			}
+			if (__redis_parse_next(parser) < 0)
+				return -1;
 		}
 		else if (ret == 2)
 			return 0;

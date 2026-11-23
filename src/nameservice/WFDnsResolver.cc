@@ -248,6 +248,36 @@ static int __default_family()
 	return family;
 }
 
+/* M20: DnsCache frees untagged lists with DnsUtil::freeaddrinfo(). */
+static struct addrinfo *__copy_addrinfo(const struct addrinfo *src)
+{
+	struct addrinfo *res = NULL;
+	struct addrinfo **pres = &res;
+	struct addrinfo *ai;
+
+	for (; src; src = src->ai_next)
+	{
+		ai = (struct addrinfo *)calloc(sizeof (struct addrinfo) +
+									   src->ai_addrlen, 1);
+		if (!ai)
+		{
+			protocol::DnsUtil::freeaddrinfo(res);
+			return NULL;
+		}
+
+		ai->ai_family = src->ai_family;
+		ai->ai_socktype = src->ai_socktype;
+		ai->ai_protocol = src->ai_protocol;
+		ai->ai_addrlen = src->ai_addrlen;
+		ai->ai_addr = (struct sockaddr *)(ai + 1);
+		memcpy(ai->ai_addr, src->ai_addr, src->ai_addrlen);
+		*pres = ai;
+		pres = &ai->ai_next;
+	}
+
+	return res;
+}
+
 // hosts line format: IP canonical_name [aliases...] [# Comment]
 static int __readaddrinfo_line(char *p, const char *name, const char *port,
 							   const struct addrinfo *hints,
@@ -284,8 +314,15 @@ static int __readaddrinfo_line(char *p, const char *name, const char *port,
 
 		if (strcasecmp(name, start) == 0)
 		{
-			if (getaddrinfo(ip, port, hints, res) == 0)
-				return 0;
+			struct addrinfo *ai;
+
+			if (getaddrinfo(ip, port, hints, &ai) == 0)
+			{
+				*res = __copy_addrinfo(ai);
+				freeaddrinfo(ai);
+				if (*res)
+					return 0;
+			}
 		}
 	}
 
@@ -317,7 +354,9 @@ static int __readaddrinfo(const char *path,
 		if (__readaddrinfo_line(line, name, port_str, hints, res) == 0)
 		{
 			count++;
-			res = &(*res)->ai_next;
+			/* M20: One line may give more than one node. */
+			while (*res)
+				res = &(*res)->ai_next;
 		}
 	}
 

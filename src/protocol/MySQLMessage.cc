@@ -58,6 +58,8 @@ MySQLMessage::MySQLMessage(MySQLMessage&& move) :
 	parser_ = move.parser_;
 	stream_ = move.stream_;
 	seqid_ = move.seqid_;
+	/* M6: buf_ holds the query or packet to send. */
+	buf_ = std::move(move.buf_);
 	cur_size_ = move.cur_size_;
 
 	move.parser_ = NULL;
@@ -83,6 +85,8 @@ MySQLMessage& MySQLMessage::operator= (MySQLMessage&& move)
 		parser_ = move.parser_;
 		stream_ = move.stream_;
 		seqid_ = move.seqid_;
+		/* M6: buf_ holds the query or packet to send. */
+		buf_ = std::move(move.buf_);
 		cur_size_ = move.cur_size_;
 
 		move.parser_ = NULL;
@@ -552,24 +556,28 @@ int MySQLPublicKeyResponse::encode(struct iovec vectors[], int max)
 int MySQLRSAAuthRequest::rsa_encrypt(void *ctx)
 {
 	EVP_PKEY_CTX *pkey_ctx = (EVP_PKEY_CTX *)ctx;
-	unsigned char out[256];
-	size_t outlen = 256;
 	std::string pass;
-	unsigned char *p;
+	size_t outlen;
 	size_t i;
 
 	if (EVP_PKEY_encrypt_init(pkey_ctx) > 0 &&
 		EVP_PKEY_CTX_set_rsa_padding(pkey_ctx, RSA_PKCS1_OAEP_PADDING) > 0)
 	{
-		pass.reserve(password_.size() + 1);
-		p = (unsigned char *)pass.c_str();
-		for (i = 0; i <= password_.size(); i++)
-			p[i] = (unsigned char)password_[i] ^ seed_[i % 20];
+		pass.resize(password_.size() + 1);
+		for (i = 0; i < pass.size(); i++)
+			pass[i] = password_[i] ^ seed_[i % 20];
 
-		if (EVP_PKEY_encrypt(pkey_ctx, out, &outlen, p, i) > 0)
+		/* M7: The key comes from the server, size the output by it. */
+		if (EVP_PKEY_encrypt(pkey_ctx, NULL, &outlen,
+							 (const unsigned char *)pass.c_str(), i) > 0)
 		{
-			buf_.assign((char *)out, 256);
-			return 0;
+			buf_.resize(outlen);
+			if (EVP_PKEY_encrypt(pkey_ctx, (unsigned char *)&buf_[0], &outlen,
+								 (const unsigned char *)pass.c_str(), i) > 0)
+			{
+				buf_.resize(outlen);
+				return 0;
+			}
 		}
 	}
 

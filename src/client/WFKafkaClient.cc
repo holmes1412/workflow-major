@@ -444,8 +444,14 @@ void KafkaClientTask::kafka_merge_broker_list(const std::string& scheme,
 						   std::to_string(src_broker->get_port());
 		hosts->emplace_back(std::move(host));
 
-		if (!dst->find_item(src_broker->get_node_id()))
+		/* M23: A known broker may have moved to a new address. */
+		KafkaBroker *broker = dst->find_item(src_broker->get_node_id());
+
+		if (!broker)
 			dst->add_item(*src_broker, src_broker->get_node_id());
+		else if (broker->get_port() != src_broker->get_port() ||
+				 strcmp(broker->get_host(), src_broker->get_host()) != 0)
+			*broker = *src_broker;
 	}
 }
 
@@ -891,6 +897,8 @@ int KafkaClientTask::dispatch_locked()
 
 	if (arrange_toppar(this->api_type) < 0)
 	{
+		/* M21: Refresh the meta on the next task. */
+		this->set_meta_status(false);
 		this->state = WFT_STATE_TASK_ERROR;
 		this->error = WFT_ERR_KAFKA_ARRANGE_FAILED;
 		this->finish = true;

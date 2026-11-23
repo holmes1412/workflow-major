@@ -45,6 +45,15 @@ enum
 	CPS_CHUNK_COMPLETE
 };
 
+/* L1: Transfer codings of a received message. */
+enum
+{
+	TE_NONE,
+	TE_IDENTITY,
+	TE_CHUNKED,
+	TE_OTHER
+};
+
 struct __header_line
 {
 	struct list_head list;
@@ -309,11 +318,12 @@ static int __parse_start_line(const char *ptr, size_t len,
 			while (p3 < ptr + len && *p3 != ' ')
 				p3++;
 
-			if (p3 == ptr + len)
+			/* M13: The reason phrase of a status line may be empty. */
+			if (p3 == ptr + len && !parser->is_resp)
 				return -2;
 
-			l2 = p3++ - p2;
-			while (*p3 == ' ')
+			l2 = p3 - p2;
+			while (p3 < ptr + len && *p3 == ' ')
 				p3++;
 
 			l3 = ptr + len - p3;
@@ -483,12 +493,49 @@ static int __parse_message_header(const void *message, size_t size,
 
 #define CHUNK_SIZE_MAX		(2 * 1024 * 1024 * 1024U - HTTP_CHUNK_LINE_MAX - 4)
 
+/* L2: chunk-size = 1*HEXDIG, followed by nothing but chunk extensions. */
+static int __parse_chunk_size(const char *p, const char *end, size_t *size)
+{
+	const char *start = p;
+	size_t n = 0;
+	int digit;
+
+	while (p < end)
+	{
+		if (*p >= '0' && *p <= '9')
+			digit = *p - '0';
+		else if (*p >= 'a' && *p <= 'f')
+			digit = *p - 'a' + 10;
+		else if (*p >= 'A' && *p <= 'F')
+			digit = *p - 'A' + 10;
+		else
+			break;
+
+		if (n > (CHUNK_SIZE_MAX - 1 - digit) / 16)
+			return -1;
+
+		n = n * 16 + digit;
+		p++;
+	}
+
+	if (p == start)
+		return -1;
+
+	while (p < end && (*p == ' ' || *p == '\t'))
+		p++;
+
+	if (p < end && *p != ';')
+		return -1;
+
+	*size = n;
+	return 0;
+}
+
 static int __parse_chunk_data(const char *ptr, size_t len,
 							  http_parser_t *parser)
 {
 	size_t min = MIN(HTTP_CHUNK_LINE_MAX, len);
 	size_t chunk_size;
-	char *end;
 	size_t i;
 
 	for (i = 0; i < min; i++)
@@ -501,8 +548,7 @@ static int __parse_chunk_data(const char *ptr, size_t len,
 			if (ptr[i + 1] != '\n')
 				return -2;
 
-			chunk_size = strtoul(ptr, &end, 16);
-			if (end == ptr)
+			if (__parse_chunk_size(ptr, ptr + i, &chunk_size) < 0)
 				return -2;
 
 			if (chunk_size == 0)
@@ -510,18 +556,24 @@ static int __parse_chunk_data(const char *ptr, size_t len,
 				chunk_size = i + 2;
 				parser->chunk_state = CPS_TRAILER_PART;
 			}
-			else if (chunk_size < CHUNK_SIZE_MAX)
+			else
 			{
 				chunk_size += i + 4;
 				if (len < chunk_size)
 					return 0;
+
+				/* L2: The chunk data must end with CRLF. */
+				if (ptr[chunk_size - 2] != '\r' || ptr[chunk_size - 1] != '\n')
+					return -2;
 			}
-			else
-				return -2;
 
 			parser->chunk_offset += chunk_size;
 			return 1;
 		}
+
+		/* L2: No control characters other than HTAB. */
+		if ((signed char)ptr[i] < ' ' && ptr[i] != '\t')
+			return -2;
 	}
 
 	if (i == HTTP_CHUNK_LINE_MAX)
@@ -552,6 +604,10 @@ static int __parse_trailer_part(const char *ptr, size_t len,
 
 			return 1;
 		}
+
+		/* L2: No control characters other than HTAB. */
+		if ((signed char)ptr[i] < ' ' && ptr[i] != '\t')
+			return -2;
 	}
 
 	if (i == HTTP_TRAILER_LINE_MAX)
@@ -582,6 +638,139 @@ static int __parse_chunk(const void *message, size_t size,
 	} while (ret > 0);
 
 	return ret;
+}
+
+#define CONTENT_LENGTH_MAX	((size_t)-1 / 2)
+
+/* L1: Content-Length = 1*DIGIT, or a list of the same number repeated. */
+static int __parse_content_length(const char *p, const char *end,
+								  size_t *length)
+{
+	size_t n;
+
+	while (1)
+	{
+		while (p < end && (*p == ' ' || *p == '\t'))
+			p++;
+
+		if (p == end || *p < '0' || *p > '9')
+			return -1;
+
+		n = 0;
+		do
+		{
+			if (n > (CONTENT_LENGTH_MAX - (*p - '0')) / 10)
+				return -1;
+
+			n = n * 10 + (*p - '0');
+			p++;
+		} while (p < end && *p >= '0' && *p <= '9');
+
+		if (*length != (size_t)-1 && *length != n)
+			return -1;
+
+		*length = n;
+		while (p < end && (*p == ' ' || *p == '\t'))
+			p++;
+
+		if (p == end)
+			return 0;
+
+		if (*p != ',')
+			return -1;
+
+		p++;
+	}
+}
+
+/* L1: Transfer-Encoding = #transfer-coding. Nothing may follow chunked. */
+static int __parse_transfer_encoding(const char *p, const char *end,
+									 int *coding)
+{
+	const char *name;
+	size_t len;
+
+	while (1)
+	{
+		while (p < end && (*p == ' ' || *p == '\t' || *p == ','))
+			p++;
+
+		if (p == end)
+			return 0;
+
+		name = p;
+		while (p < end && *p != ' ' && *p != '\t' && *p != ',' && *p != ';')
+			p++;
+
+		len = p - name;
+		while (p < end && (*p == ' ' || *p == '\t'))
+			p++;
+
+		if (len == 0 || (p < end && *p != ',' && *p != ';'))
+			return -1;
+
+		while (p < end && *p != ',')
+			p++;
+
+		if (*coding == TE_CHUNKED)
+			return -1;
+
+		if (len == 7 && strncasecmp(name, "chunked", 7) == 0)
+			*coding = TE_CHUNKED;
+		else if (len != 8 || strncasecmp(name, "identity", 8) != 0)
+			*coding = TE_OTHER;
+		else if (*coding == TE_NONE)
+			*coding = TE_IDENTITY;
+	}
+}
+
+/* L1: Body length from all Content-Length and Transfer-Encoding fields. */
+static int __check_message_length(http_parser_t *parser)
+{
+	size_t length = (size_t)-1;
+	int coding = TE_NONE;
+	int has_te = 0;
+	struct __header_line *line;
+	struct list_head *pos;
+	const char *value;
+
+	list_for_each(pos, &parser->header_list)
+	{
+		line = list_entry(pos, struct __header_line, list);
+		value = line->buf + line->name_len + 2;
+		if (line->name_len == 14 &&
+			strncasecmp(line->buf, "Content-Length", 14) == 0)
+		{
+			if (__parse_content_length(value, value + line->value_len,
+									   &length) < 0)
+				return -1;
+		}
+		else if (line->name_len == 17 &&
+				 strncasecmp(line->buf, "Transfer-Encoding", 17) == 0)
+		{
+			has_te = 1;
+			if (__parse_transfer_encoding(value, value + line->value_len,
+										  &coding) < 0)
+				return -1;
+		}
+	}
+
+	if (coding == TE_CHUNKED)
+	{
+		parser->chunked = 1;
+		if (length != (size_t)-1)
+			parser->keep_alive = 0;
+	}
+	else if (coding == TE_IDENTITY || !has_te)
+	{
+		parser->chunked = 0;
+		if (length != (size_t)-1)
+			parser->content_length = length;
+	}
+	else
+		return -1;
+
+	return 0;
 }
 
 void http_parser_init(int is_resp, http_parser_t *parser)
@@ -643,6 +832,9 @@ int http_parser_append_message(const void *buf, size_t *n,
 		ret = __parse_message_header(parser->msgbuf, parser->msgsize, parser);
 		if (ret <= 0)
 			return ret;
+
+		if (__check_message_length(parser) < 0)
+			return -2;
 
 		if (parser->chunked)
 		{

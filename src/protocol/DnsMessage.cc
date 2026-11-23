@@ -458,23 +458,35 @@ int DnsMessage::append(const void *buf, size_t *size)
 
 int DnsResponse::append(const void *buf, size_t *size)
 {
+	bool single = this->is_single_packet();
 	int ret = this->DnsMessage::append(buf, size);
-	const char *qname = this->parser->question.qname;
+	bool stray;
 
-	if (ret >= 1 && (this->request_id != this->get_id() ||
-		strcasecmp(this->request_name.c_str(), qname) != 0))
+	/* M19: In UDP mode, drop malformed or mismatched datagrams and wait. */
+	if (single)
 	{
-		if (!this->is_single_packet())
-		{
-			errno = EBADMSG;
-			ret = -1;
-		}
+		if (ret < 0)
+			stray = (errno == EBADMSG);
 		else
+			stray = (ret >= 1 && (this->request_id != this->get_id() ||
+					 strcasecmp(this->request_name.c_str(),
+								this->parser->question.qname) != 0));
+
+		if (stray)
 		{
 			dns_parser_deinit(this->parser);
 			dns_parser_init(this->parser);
+			/* M19: dns_parser_init() clears it. */
+			this->parser->single_packet = 1;
 			ret = 0;
 		}
+	}
+	else if (ret >= 1 && (this->request_id != this->get_id() ||
+			 strcasecmp(this->request_name.c_str(),
+						this->parser->question.qname) != 0))
+	{
+		errno = EBADMSG;
+		ret = -1;
 	}
 
 	return ret;

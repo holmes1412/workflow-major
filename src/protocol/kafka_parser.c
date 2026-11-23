@@ -22,9 +22,11 @@
 #include <stdio.h>
 #include <string.h>
 #include <ctype.h>
+#include <openssl/crypto.h>
 #include <openssl/sha.h>
 #include <openssl/hmac.h>
 #include <openssl/evp.h>
+#include <openssl/rand.h>
 #include "kafka_parser.h"
 
 static kafka_api_version_t kafka_api_version_queryable[] = {
@@ -916,19 +918,18 @@ static void scram_h(kafka_scram_t *scram, const struct iovec *str,
 }
 
 static int scram_build_client_final_message_wo_proof(
-		kafka_scram_t *scram, const struct iovec *snonce, struct iovec *out)
+		const struct iovec *snonce, struct iovec *out)
 {
 	const char *attr_c = "biws";
 
-	out->iov_len = 9 + scram->cnonce.iov_len + snonce->iov_len;
+	/* O9: The server nonce already starts with the client nonce. */
+	out->iov_len = 9 + snonce->iov_len;
 	out->iov_base = malloc(out->iov_len + 1);
 	if (!out->iov_base)
 		return -1;
 
-	snprintf((char *)out->iov_base, out->iov_len + 1, "c=%s,r=%.*s%.*s",
-			 attr_c, (int)scram->cnonce.iov_len,
-			 (char *)scram->cnonce.iov_base, (int)snonce->iov_len,
-			 (char *)snonce->iov_base);
+	snprintf((char *)out->iov_base, out->iov_len + 1, "c=%s,r=%.*s",
+			 attr_c, (int)snonce->iov_len, (char *)snonce->iov_base);
 	return 0;
 }
 
@@ -972,7 +973,7 @@ static int scram_build_client_final_message(kafka_scram_t *scram, int itcnt,
 
 	scram_h(scram, &client_key_iov, &stored_key_iov);
 
-	if (scram_build_client_final_message_wo_proof(scram, server_nonce,
+	if (scram_build_client_final_message_wo_proof(server_nonce,
 									&client_final_msg_wo_proof_iov) == -1)
 		return -1;
 
@@ -1095,20 +1096,20 @@ static int scram_handle_server_final_message(const char *buf, size_t len,
 											 kafka_config_t *conf,
 											 kafka_sasl_t *sasl)
 {
+	const struct iovec *sign = &sasl->scram.server_signature_b64;
 	struct iovec attr_v, attr_e;
 	const struct iovec in = {(void *)buf, len};
 
-	if (scram_get_attr(&in, 'm', &attr_e) == 0)
+	/* M15: Succeed only with the expected "v=" and no "e=". */
+	if (scram_get_attr(&in, 'm', &attr_e) == 0 ||
+		scram_get_attr(&in, 'e', &attr_e) == 0)
 		return -1;
 
-	if (scram_get_attr(&in, 'v', &attr_v) == 0)
+	if (scram_get_attr(&in, 'v', &attr_v) != 0 || sign->iov_len == 0 ||
+		attr_v.iov_len != sign->iov_len ||
+		CRYPTO_memcmp(attr_v.iov_base, sign->iov_base, sign->iov_len) != 0)
 	{
-		if (sasl->scram.server_signature_b64.iov_len == attr_v.iov_len &&
-			strncmp((const char *)sasl->scram.server_signature_b64.iov_base,
-					(const char *)attr_v.iov_base, attr_v.iov_len) != 0)
-		{
-			return -1;
-		}
+		return -1;
 	}
 
 	return 0;
@@ -1139,21 +1140,24 @@ static int kafka_sasl_scram_recv(const char *buf, size_t len, void *p, void *q)
 	return ret;
 }
 
-static int jitter(int low, int high)
-{
-	return (low + (rand() % ((high - low) + 1)));
-}
-
 static int scram_generate_nonce(struct iovec *iov)
 {
+	static const char chars[] =
+		"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+	unsigned char buf[32];
+	char *ptr;
 	int i;
-	char *ptr = (char *)malloc(33);
 
+	/* M11: The nonce must be unpredictable. */
+	if (RAND_bytes(buf, sizeof buf) != 1)
+		return -1;
+
+	ptr = (char *)malloc(33);
 	if (!ptr)
 		return -1;
 
 	for (i = 0; i < 32; i++)
-		ptr[i] = jitter(0x2d, 0x7e);
+		ptr[i] = chars[buf[i] & 63];
 	ptr[32] = '\0';
 
 	iov->iov_base = ptr;
@@ -1204,6 +1208,9 @@ int kafka_sasl_set_mechanisms(kafka_config_t *conf)
 	{
 		conf->recv = kafka_sasl_scram_recv;
 		conf->client_new = kafka_sasl_scram_client_new;
+
+		/* O8: Report success as for plain. */
+		return 0;
 	}
 
 	return -1;

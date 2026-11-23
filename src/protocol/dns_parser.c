@@ -102,6 +102,10 @@ static int __dns_parser_parse_host(char *phost, dns_parser_t *parser)
 		// RFC 1035, 4.1.4 Message compression
 		else if ((len & 0xC0) == 0xC0)
 		{
+			/* H1: A pointer takes two bytes. */
+			if (*cur + 2 > msgend)
+				return -2;
+
 			pointer = __dns_parser_uint16(*cur) & 0x3FFF;
 
 			if (pointer >= parser->msgsize)

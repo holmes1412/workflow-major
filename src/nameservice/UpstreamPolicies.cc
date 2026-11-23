@@ -406,12 +406,19 @@ EndpointAddress *UPSGroupPolicy::consistent_hash_with_group(unsigned int hash,
 	if (it == this->addr_hash.end())
 		it = this->addr_hash.begin();
 
-	while (!this->is_alive(it->second))
+	/* M18: Scan the ring once. Backups are not on it. */
+	size_t i, n = this->addr_hash.size();
+	for (i = 0; i < n; i++)
 	{
-		it++;
-		if (it == this->addr_hash.end())
+		if (this->is_alive(it->second))
+			break;
+
+		if (++it == this->addr_hash.end())
 			it = this->addr_hash.begin();
 	}
+
+	if (i == n)
+		return NULL;
 
 	return this->check_and_get(it->second, false, tracing);
 }

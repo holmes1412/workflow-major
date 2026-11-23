@@ -32,6 +32,8 @@ int SSLHandshaker::encode(struct iovec vectors[], int max)
 	long len;
 	int ret;
 
+	/* M4: Drop errors left by other connections. */
+	ERR_clear_error();
 	ret = SSL_do_handshake(this->ssl);
 	if (ret <= 0)
 	{
@@ -70,6 +72,8 @@ static int __ssl_handshake(const void *buf, size_t *size, SSL *ssl,
 		return -1;
 
 	*size = ret;
+	/* M4: Drop errors left by other connections. */
+	ERR_clear_error();
 	ret = SSL_do_handshake(ssl);
 	if (ret <= 0)
 	{
@@ -139,6 +143,8 @@ int SSLWrapper::encode(struct iovec vectors[], int max)
 	{
 		if (iov->iov_len > 0)
 		{
+			/* M4: Drop errors left by other connections. */
+			ERR_clear_error();
 			ret = SSL_write(this->ssl, iov->iov_base, iov->iov_len);
 			if (ret <= 0)
 			{
@@ -171,6 +177,8 @@ int SSLWrapper::append_message()
 	char buf[BUFSIZE];
 	int ret;
 
+	/* M4: Drop errors left by other connections. */
+	ERR_clear_error();
 	while ((ret = SSL_read(this->ssl, buf, BUFSIZE)) > 0)
 	{
 		size_t nleft = ret;
@@ -190,6 +198,9 @@ int SSLWrapper::append_message()
 				return ret;
 
 		} while (nleft > 0);
+
+		/* M4: The wrapped append() may leave errors too. */
+		ERR_clear_error();
 	}
 
 	ret = SSL_get_error(this->ssl, ret);
@@ -230,6 +241,8 @@ int SSLWrapper::feedback(const void *buf, size_t size)
 	if (size == 0)
 		return 0;
 
+	/* M4: Drop errors left by other connections. */
+	ERR_clear_error();
 	ret = SSL_write(this->ssl, buf, size);
 	if (ret <= 0)
 	{

@@ -26,6 +26,7 @@ int decode_length_safe(unsigned long long *res, const unsigned char **pos,
 	if (p >= end)
 		return 0;
 
+	/* H3: Each check covers all the bytes up to the new *pos. */
 	switch (*p)
 	{
 	default:
@@ -39,7 +40,7 @@ int decode_length_safe(unsigned long long *res, const unsigned char **pos,
 		break;
 
 	case 252:
-		if (p + 2 > end)
+		if (p + 3 > end)
 			return 0;
 
 		*res = uint2korr(p + 1);
@@ -47,7 +48,7 @@ int decode_length_safe(unsigned long long *res, const unsigned char **pos,
 		break;
 
 	case 253:
-		if (p + 3 > end)
+		if (p + 4 > end)
 			return 0;
 
 		*res = uint3korr(p + 1);
@@ -55,7 +56,7 @@ int decode_length_safe(unsigned long long *res, const unsigned char **pos,
 		break;
 
 	case 254:
-		if (p + 8 > end)
+		if (p + 9 > end)
 			return 0;
 
 		*res = uint8korr(p + 1);

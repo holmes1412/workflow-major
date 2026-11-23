@@ -77,6 +77,10 @@ int mysql_parser_parse(const void *buf, size_t len, mysql_parser_t *parser)
 //	const char *end = (const char *)buf + len;
 	int ret;
 
+	/* H2: A packet without payload. buf may be NULL. */
+	if (parser->offset >= len)
+		return -2;
+
 	do {
 		ret = parser->parse(buf, len, parser);
 		if (ret < 0)
@@ -329,6 +333,10 @@ static int parse_row_packet(const void *buf, size_t len, mysql_parser_t *parser)
 
 	for (i = 0; i < parser->current_result_set->field_count; i++)
 	{
+		/* M25: A row with fewer cells than fields. */
+		if (p >= buf_end)
+			break;
+
 		if (*p == MYSQL_PACKET_HEADER_NULL)
 		{
 			p++;

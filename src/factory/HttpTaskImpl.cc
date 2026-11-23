@@ -22,7 +22,9 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <ctype.h>
 #include <string>
+#include <vector>
 #include <openssl/ssl.h>
 #include <openssl/bio.h>
 #include <openssl/evp.h>
@@ -41,6 +43,19 @@ using namespace protocol;
 #define HTTP_KEEPALIVE_MAX		(300 * 1000)
 
 /**********Client**********/
+
+/* L11: URIParser stores an IPv6 literal without its brackets. */
+static void __append_uri_host(const char *host, std::string& str)
+{
+	if (strchr(host, ':'))
+	{
+		str += '[';
+		str += host;
+		str += ']';
+	}
+	else
+		str += host;
+}
 
 static int __encode_auth(const char *p, std::string& auth)
 {
@@ -250,7 +265,7 @@ bool ComplexHttpTask::init_success()
 	}
 
 	if (uri_.host && uri_.host[0])
-		header_host = uri_.host;
+		__append_uri_host(uri_.host, header_host);
 
 	if (uri_.port && uri_.port[0])
 	{
@@ -298,6 +313,134 @@ bool ComplexHttpTask::init_success()
 	return true;
 }
 
+/* C3: scheme = ALPHA *( ALPHA / DIGIT / "+" / "-" / "." ) */
+static bool __has_scheme(const std::string& ref)
+{
+	size_t i;
+
+	if (ref.empty() || !isalpha((unsigned char)ref[0]))
+		return false;
+
+	for (i = 1; i < ref.size(); i++)
+	{
+		if (ref[i] == ':')
+			return true;
+
+		if (!isalnum((unsigned char)ref[i]) &&
+			ref[i] != '+' && ref[i] != '-' && ref[i] != '.')
+		{
+			return false;
+		}
+	}
+
+	return false;
+}
+
+/* C3: RFC 3986, section 5.2.4, for a path that starts with '/'. */
+static std::string __remove_dot_segments(const std::string& path)
+{
+	std::vector<std::string> segs;
+	std::string out;
+	size_t pos = 1;
+	size_t end;
+
+	while (1)
+	{
+		end = path.find('/', pos);
+		std::string seg(path, pos, end == std::string::npos ?
+								   std::string::npos : end - pos);
+		bool dot = (seg == "." || seg == "..");
+
+		if (seg == "..")
+		{
+			if (!segs.empty())
+				segs.pop_back();
+		}
+		else if (!dot)
+			segs.push_back(seg);
+
+		if (end == std::string::npos)
+		{
+			/* "/a/." and "/a/.." end with a slash. */
+			if (dot)
+				segs.push_back("");
+
+			break;
+		}
+
+		pos = end + 1;
+	}
+
+	for (const std::string& seg : segs)
+	{
+		out += '/';
+		out += seg;
+	}
+
+	return out.empty() ? "/" : out;
+}
+
+/* C3: Resolves a relative reference without an authority (RFC 3986, sections
+ * 5.2.2 and 5.2.3) against the request URI. The fragment is dropped. */
+static std::string __resolve_reference(const ParsedURI& base,
+									   const std::string& ref)
+{
+	size_t pos = ref.find_first_of("?#");
+	std::string path(ref, 0, pos);
+	std::string base_path(base.path && base.path[0] ? base.path : "/");
+	std::string url(base.scheme);
+	std::string ref_query;
+	const char *query = NULL;
+
+	if (pos != std::string::npos && ref[pos] == '?')
+	{
+		size_t end = ref.find('#', pos);
+
+		ref_query.assign(ref, pos + 1, end == std::string::npos ?
+									   std::string::npos : end - pos - 1);
+		query = ref_query.c_str();
+	}
+
+	if (path.empty())
+	{
+		path = base_path;
+		if (!query)
+			query = base.query;
+	}
+	else
+	{
+		if (path[0] != '/')
+			path = base_path.substr(0, base_path.rfind('/') + 1) + path;
+
+		path = __remove_dot_segments(path);
+	}
+
+	url += "://";
+	if (strchr(base.host, ':'))
+	{
+		url += '[';
+		url += base.host;
+		url += ']';
+	}
+	else
+		url += base.host;
+
+	if (base.port)
+	{
+		url += ':';
+		url += base.port;
+	}
+
+	url += path;
+	if (query)
+	{
+		url += '?';
+		url += query;
+	}
+
+	return url;
+}
+
 bool ComplexHttpTask::redirect_url(HttpResponse *client_resp,
 								   const ParsedURI& uri, ParsedURI& new_uri)
 {
@@ -314,20 +457,21 @@ bool ComplexHttpTask::redirect_url(HttpResponse *client_resp,
 			return false;
 		}
 
-		if (url[0] == '/')
-		{
-			if (url[1] != '/')
-			{
-				if (uri.port)
-					url = ':' + (uri.port + url);
-
-				url = "//" + (uri.host + url);
-			}
-
+		/* C3: Resolve any relative reference against the request URI. */
+		if (url[0] == '/' && url[1] == '/')
 			url = uri.scheme + (':' + url);
+		else if (!__has_scheme(url))
+			url = __resolve_reference(uri, url);
+
+		/* Anything that has no host after that, e.g. "mailto:x". */
+		if (URIParser::parse(url, new_uri) < 0 ||
+			!new_uri.host || !new_uri.host[0])
+		{
+			this->state = WFT_STATE_TASK_ERROR;
+			this->error = WFT_ERR_HTTP_BAD_REDIRECT_HEADER;
+			return false;
 		}
 
-		URIParser::parse(url, new_uri);
 		return true;
 	}
 
@@ -395,6 +539,51 @@ void ComplexHttpTask::check_response()
 	}
 }
 
+static int __uri_port(const ParsedURI& uri)
+{
+	if (uri.port)
+		return atoi(uri.port);
+
+	if (uri.scheme && strcasecmp(uri.scheme, "https") == 0)
+		return 443;
+
+	return 80;
+}
+
+/* M8: Same scheme, host and port, or http to https on the default ports. */
+static bool __keep_credentials(const ParsedURI& from, const ParsedURI& to)
+{
+	int from_port = __uri_port(from);
+	int to_port = __uri_port(to);
+
+	if (strcasecmp(from.host, to.host) != 0)
+		return false;
+
+	if (strcasecmp(from.scheme, to.scheme) == 0)
+		return from_port == to_port;
+
+	return strcasecmp(from.scheme, "http") == 0 && from_port == 80 &&
+		   strcasecmp(to.scheme, "https") == 0 && to_port == 443;
+}
+
+static void __erase_credentials(HttpRequest *req)
+{
+	static const char *const names[] = {
+		"Authorization", "Proxy-Authorization", "Cookie"
+	};
+	HttpHeaderCursor cursor(req);
+	struct HttpMessageHeader header;
+
+	for (const char *name : names)
+	{
+		header.name = name;
+		header.name_len = strlen(name);
+		cursor.rewind();
+		while (cursor.find_and_erase(&header))
+			;
+	}
+}
+
 bool ComplexHttpTask::finish_once()
 {
 	if (this->state != WFT_STATE_SUCCESS)
@@ -405,24 +594,13 @@ bool ComplexHttpTask::finish_once()
 		ParsedURI new_uri;
 		if (this->need_redirect(uri_, new_uri))
 		{
-			if (uri_.userinfo && strcasecmp(uri_.host, new_uri.host) == 0)
+			/* M8: Drop all credentials when the redirect leaves the origin. */
+			if (!__keep_credentials(uri_, new_uri))
+				__erase_credentials(this->get_req());
+			else if (uri_.userinfo && !new_uri.userinfo)
 			{
-				if (!new_uri.userinfo)
-				{
-					new_uri.userinfo = uri_.userinfo;
-					uri_.userinfo = NULL;
-				}
-			}
-			else if (uri_.userinfo)
-			{
-				HttpRequest *client_req = this->get_req();
-				HttpHeaderCursor cursor(client_req);
-				struct HttpMessageHeader header = {
-					.name = "Authorization",
-					.name_len = strlen("Authorization")
-				};
-
-				cursor.find_and_erase(&header);
+				new_uri.userinfo = uri_.userinfo;
+				uri_.userinfo = NULL;
 			}
 
 			this->set_redirect(new_uri);
@@ -435,6 +613,20 @@ bool ComplexHttpTask::finish_once()
 }
 
 /*******Proxy Client*******/
+
+/* H11: With a name, certificate verification (when the SSL_CTX enables it)
+ * also checks that the peer certificate belongs to that host or IP address.
+ * A name starting with '/' is a Unix domain socket path. */
+static int __ssl_set_peer_name(SSL *ssl, const char *name)
+{
+	if (!name || name[0] == '\0' || name[0] == '/')
+		return 0;
+
+	if (X509_VERIFY_PARAM_set1_ip_asc(SSL_get0_param(ssl), name) > 0)
+		return 0;
+
+	return SSL_set1_host(ssl, name) > 0 ? 0 : -1;
+}
 
 static SSL *__create_ssl(SSL_CTX *ssl_ctx)
 {
@@ -541,6 +733,12 @@ int ComplexHttpProxyTask::init_ssl_connection()
 	if (!ssl)
 		return -1;
 
+	if (__ssl_set_peer_name(ssl, user_uri_.host) < 0)
+	{
+		SSL_free(ssl);
+		return -1;
+	}
+
 	SSL_set_tlsext_host_name(ssl, user_uri_.host);
 	SSL_set_connect_state(ssl);
 
@@ -564,8 +762,9 @@ CommMessageOut *ComplexHttpProxyTask::message_out()
 	if (seqid == 0) // CONNECT
 	{
 		HttpRequest *conn_req = new HttpRequest;
-		std::string request_uri(user_uri_.host);
+		std::string request_uri;
 
+		__append_uri_host(user_uri_.host, request_uri);
 		request_uri += ":";
 		if (user_uri_.port)
 			request_uri += user_uri_.port;
@@ -693,6 +892,14 @@ bool ComplexHttpProxyTask::init_success()
 		return false;
 	}
 
+	/* H9: Reject a target URL without host. */
+	if (!user_uri_.host || !user_uri_.host[0])
+	{
+		this->state = WFT_STATE_TASK_ERROR;
+		this->error = WFT_ERR_URI_PARSE_FAILED;
+		return false;
+	}
+
 	int user_port;
 	if (user_uri_.port)
 	{
@@ -751,12 +958,13 @@ bool ComplexHttpProxyTask::init_success()
 	}
 
 	if (user_uri_.host && user_uri_.host[0])
-		header_host = user_uri_.host;
+		__append_uri_host(user_uri_.host, header_host);
 
 	if ((is_ssl_ && user_port != 443) || (!is_ssl_ && user_port != 80))
 	{
 		header_host += ":";
-		header_host += uri_.port;
+		/* M2: The target's port, not the proxy's. */
+		header_host += user_uri_.port;
 	}
 
 	HttpRequest *client_req = this->get_req();
@@ -812,25 +1020,13 @@ bool ComplexHttpProxyTask::finish_once()
 		ParsedURI new_uri;
 		if (this->need_redirect(user_uri_, new_uri))
 		{
-			if (user_uri_.userinfo &&
-				strcasecmp(user_uri_.host, new_uri.host) == 0)
+			/* M8: Drop all credentials when the redirect leaves the origin. */
+			if (!__keep_credentials(user_uri_, new_uri))
+				__erase_credentials(this->get_req());
+			else if (user_uri_.userinfo && !new_uri.userinfo)
 			{
-				if (!new_uri.userinfo)
-				{
-					new_uri.userinfo = user_uri_.userinfo;
-					user_uri_.userinfo = NULL;
-				}
-			}
-			else if (user_uri_.userinfo)
-			{
-				HttpRequest *client_req = this->get_req();
-				HttpHeaderCursor cursor(client_req);
-				struct HttpMessageHeader header = {
-					.name = "Authorization",
-					.name_len = strlen("Authorization")
-				};
-
-				cursor.find_and_erase(&header);
+				new_uri.userinfo = user_uri_.userinfo;
+				user_uri_.userinfo = NULL;
 			}
 
 			user_uri_ = std::move(new_uri);

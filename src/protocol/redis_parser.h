@@ -53,7 +53,6 @@ typedef struct __redis_parser
 	size_t msgidx;
 	size_t findidx;
 	size_t nchar;
-	int nleft;
 	char type;
 	redis_reply_t reply;
 } redis_parser_t;
